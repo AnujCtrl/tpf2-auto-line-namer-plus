@@ -176,6 +176,14 @@ function t.sample_facts_exist_for_every_kind_and_render_without_error()
     eq(naming.sampleFacts("bus").carriesCargo, false)
 end
 
+function t.sample_facts_classify_as_their_own_kind()
+    local classify = require("anujctrl/alnp/classify")
+    local kinds = require("anujctrl/alnp/kinds")
+    for __, kind in ipairs(kinds.list) do
+        eq(classify.kind(naming.sampleFacts(kind)), kind, kind)
+    end
+end
+
 function t.token_reference_lists_every_token_once_with_help_and_example()
     local seen = {}
     for __, entry in ipairs(naming.tokens) do

@@ -210,7 +210,22 @@ function naming.pickNumber(current, taken)
     return n
 end
 
--- Plausible facts (C3) for previewing a pattern for `kind`, without reading the game.
+-- classify.kind's transport-mode key for each kind; "unknown" has none, so its modes stay {}.
+local MODE_BY_KIND = {
+    bus = "bus",
+    tram = "tram",
+    truck = "truck",
+    trainPassenger = "train",
+    trainCargo = "train",
+    shipPassenger = "ship",
+    shipCargo = "ship",
+    airPassenger = "air",
+    airCargo = "air",
+}
+
+-- Plausible facts (C3) for previewing a pattern for `kind`, without reading the game. Built so
+-- that classify.kind(naming.sampleFacts(kind)) == kind for every entry of kinds.list (this module
+-- does not require classify itself; that equivalence is exercised in the test).
 function naming.sampleFacts(kind)
     local isCargo = kinds.cargo[kind] == true
     local stops
@@ -225,10 +240,13 @@ function naming.sampleFacts(kind)
             { stationGroup = 2, stop = "Shelbyville East", town = "Shelbyville" },
         }
     end
+    local modes = {}
+    local modeKey = MODE_BY_KIND[kind]
+    if modeKey then modes[modeKey] = true end
     return {
         id = 0,
         name = "",
-        modes = {},
+        modes = modes,
         vehicleCount = 2,
         cargos = isCargo and { "Coal", "Steel" } or { "Passengers" },
         carriesPassengers = not isCargo,
