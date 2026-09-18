@@ -365,6 +365,44 @@ function t.an_unnumbered_line_scanned_first_does_not_steal_a_number_already_owne
 end
 
 -- ------------------------------------------------------------------------------------------
+-- 4c (fix round 2, mutation survivor). The scan's *initial* taken-map seed
+-- (propose.takenByKey(state.records, nil), at the top of startScan) is what stops a
+-- not-yet-scanned line's number being handed to a line scanned EARLIER. The two fix-round-1
+-- tests above both gave the numbered line `number = 2`, and naming.pickNumber always tries 1
+-- first for an unnumbered line regardless of the seed -- so replacing the seed with `{}` still
+-- passed them (the earlier-scanned unnumbered line lands on 1 either way, no collision). This
+-- test instead gives the owned line `number = 1`, the value the earlier-scanned unnumbered line
+-- WOULD naturally pick, so a missing seed produces a real, detectable collision.
+-- ------------------------------------------------------------------------------------------
+function t.the_initial_seed_stops_an_earlier_line_from_taking_a_number_a_later_line_owns()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local tbl = settings.defaults()
+    facts.clearCache()
+    local ownFacts = facts.forLine(2, tbl)
+    local __, __, key = propose.name(ownFacts, nil, tbl, {})
+    assert(key ~= nil, "expected the default pattern to use a number token")
+
+    -- Line 2 (the higher id, scanned SECOND) already owns number 1 -- the number an unnumbered
+    -- line would naturally pick first. Line 1 (the lower id, scanned FIRST) has no record.
+    local records = { [2] = { lastAssigned = "Line 2", number = 1, numberKey = key } }
+    local send, calls = recordingSend()
+    local component = linesTab.build({ settings = tbl, records = records }, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    tickAndApply(component, table_, 1, 2)
+    local byLine = renamesByLine(calls)
+    eq(byLine[2].n, 1, "the line that already owns number 1 must keep it")
+    eq(byLine[1].n, 2, "the earlier-scanned line must not be given the number line 2 already owns")
+    assert(byLine[1].n ~= byLine[2].n, "the two lines must not collide on the same number")
+
+    eq(fakeGui.text(table_.rows[1][4]), byLine[1].name, "row 1's proposed-name text matches the apply payload")
+    eq(fakeGui.text(table_.rows[2][4]), byLine[2].name, "row 2's proposed-name text matches the apply payload")
+end
+
+-- ------------------------------------------------------------------------------------------
 -- 5. "Apply checked" sends exactly the ticked rows; a second click sends nothing.
 -- ------------------------------------------------------------------------------------------
 function t.apply_checked_sends_ticked_rows_then_nothing_on_second_click()
