@@ -34,24 +34,108 @@ function t.can_read_at_least_the_files_already_written()
     assert(any, "no .lua files found under res/, mod.lua or strings.lua")
 end
 
+-- Reduces a line to just its code: every quoted string span ("..." or '...', honouring backslash
+-- escapes so `"say \"hi\" // x"` stays one span) is dropped entirely, then a trailing `-- ...`
+-- line comment is dropped too. A syntax mention inside a string or a comment -- a URL, a help
+-- example, the English word "goto" -- is therefore invisible to every pattern check below. A
+-- per-line heuristic is enough for this codebase: no file opens a `[[ ... ]]` long string, so no
+-- check here needs to track state across lines.
+local function codeOnly(line)
+    local out = {}
+    local i, n = 1, #line
+    while i <= n do
+        if line:sub(i, i + 1) == "--" then
+            break
+        end
+        local c = line:sub(i, i)
+        if c == '"' or c == "'" then
+            local quote = c
+            i = i + 1
+            while i <= n do
+                local d = line:sub(i, i)
+                if d == "\\" then
+                    i = i + 2
+                elseif d == quote then
+                    i = i + 1
+                    break
+                else
+                    i = i + 1
+                end
+            end
+        else
+            out[#out + 1] = c
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
+
+function t.codeOnly_strips_strings_and_comments_but_keeps_real_code()
+    local eq = function(actual, expected, label)
+        assert(actual == expected, label .. ": expected " .. ("%q"):format(expected) .. ", got " .. ("%q"):format(actual))
+    end
+    eq(codeOnly('local probeStr = "a // b"'):find("//", 1, true) and "has //" or "no //", "no //", "string containing //")
+    eq(codeOnly("local x = 1 -- 7 // 2"):find("//", 1, true) and "has //" or "no //", "no //", "// only in a trailing comment")
+    eq(codeOnly('help = "goto settings"'):find("goto", 1, true) and "has goto" or "no goto", "no goto", "goto only inside a string")
+    eq(codeOnly('local s = "say \\"hi\\" // x"'):find("//", 1, true) and "has //" or "no //", "no //", "// inside an escaped-quote string")
+    eq(codeOnly("local x = 7 // 2"):find("//", 1, true) and "has //" or "no //", "has //", "a real // outside any string/comment")
+    eq(codeOnly("goto done"):find("goto", 1, true) and "has goto" or "no goto", "has goto", "a real goto statement")
+end
+
 -- In Transport Fever 2, `_` is the translation function. A loop variable, a local or a parameter
--- named `_` shadows it and any later `_("text")` in that scope calls a number. Ported verbatim
--- from tpf2-bus-line-tool/test/test_lint.lua; the %f frontiers keep `__` (the approved spelling)
--- clean.
+-- named `_` shadows it and any later `_("text")` in that scope calls a number. The loop-variable
+-- and local patterns are ported verbatim from tpf2-bus-line-tool/test/test_lint.lua; the %f
+-- frontiers keep `__` (the approved spelling) clean.
+--
+-- The parameter pattern is extended past that reference (controller ruling): the reference only
+-- matches the word `function` directly against `(`, so it catches an anonymous `function(_, x)`
+-- but not this codebase's dominant style, a NAMED declaration -- `local function foo(_, x)`,
+-- `function M.foo(_, x)`, `function M:foo(_)`. `[%w_.:]*` between `function` and `(` accepts that
+-- name (identifier characters, dots for a table path, one colon for a method), or nothing at all
+-- for the anonymous case, before checking the captured parameter list for a bare `_`.
+local function shadowsUnderscore(code)
+    if code:match("for%s+_%s*[,i]") then return true end
+    if code:match("^%s*local%s+_%s*[,=]") then return true end
+    local params = code:match("function%s*[%w_.:]*%s*%(([^)]*)%)")
+    return params ~= nil and params:match("%f[%w_]_%f[^%w_]") ~= nil
+end
+
 function t.underscore_never_shadows_the_translator()
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
         local lines = readLines(path)
         if lines then
             for n, line in ipairs(lines) do
-                if line:match("for%s+_%s*[,i]") or line:match("^%s*local%s+_%s*[,=]")
-                    or line:match("function%s*%([^)]*%f[%w_]_%f[^%w_]") then
+                if shadowsUnderscore(codeOnly(line)) then
                     offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                 end
             end
         end
     end
     assert(#offenders == 0, "`_` shadowed in:\n  " .. table.concat(offenders, "\n  "))
+end
+
+function t.underscore_shadow_checker_catches_named_and_anonymous_function_parameters()
+    local mustReport = {
+        "local function foo(_, x)",
+        "function M.foo(x, _)",
+        "function M:bar(_)",
+        "function(_, x)",
+        "x = function(a, _)",
+    }
+    for __, line in ipairs(mustReport) do
+        assert(shadowsUnderscore(codeOnly(line)), "expected to catch: " .. line)
+    end
+
+    local mustNotReport = {
+        "local function foo(__, x)",
+        "function M.foo(x_, _y)",
+        'local text = _("Hello")',
+        'call(function() return _("x") end)',
+    }
+    for __, line in ipairs(mustNotReport) do
+        assert(not shadowsUnderscore(codeOnly(line)), "expected NOT to catch: " .. line)
+    end
 end
 
 -- os.execute's success signal is not portable: 5.2+ returns `true` on success, but 5.1 and
@@ -90,12 +174,9 @@ local function isUnderGui(path)
     return path:find("/gui/", 1, true) ~= nil
 end
 
-local function isCommentLine(line)
-    return line:match("^%s*%-%-") ~= nil
-end
-
--- Checks that `needle` (a plain-text substring, not a pattern) appears only on non-comment lines
--- of files for which `allowed(path)` is true; every other occurrence is an offender.
+-- Checks that `needle` (a plain-text substring, not a pattern) appears in the CODE (see
+-- codeOnly()) only of files for which `allowed(path)` is true; every other occurrence is an
+-- offender. A mention inside a string or a comment is not a call, so it is not checked at all.
 local function checkRestrictedTo(needle, allowed, label)
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
@@ -103,7 +184,7 @@ local function checkRestrictedTo(needle, allowed, label)
             local lines = readLines(path)
             if lines then
                 for n, line in ipairs(lines) do
-                    if not isCommentLine(line) and line:find(needle, 1, true) then
+                    if codeOnly(line):find(needle, 1, true) then
                         offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                     end
                 end
@@ -134,17 +215,18 @@ function t.print_is_restricted_to_log()
     checkRestrictedTo("print(", function(path) return path == LOG_PATH end, "print(")
 end
 
--- Collects every non-comment line matching `pattern` across every listed file, as file:line
--- offender strings. `pattern` is a Lua pattern (not a plain substring), so a false positive from
--- a comment or a help string that merely mentions the banned syntax is fixed by tightening the
--- pattern here, not by editing whatever file it fired on.
+-- Collects every line whose CODE (see codeOnly()) matches `pattern`, across every listed file, as
+-- file:line offender strings. `pattern` is a Lua pattern (not a plain substring); a false
+-- positive from a comment or a help string that merely mentions the banned syntax is impossible
+-- by construction (codeOnly already removed it), so a real false positive here would mean
+-- tightening the pattern itself, not editing whatever file it fired on.
 local function collectPatternOffenders(pattern)
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
         local lines = readLines(path)
         if lines then
             for n, line in ipairs(lines) do
-                if not isCommentLine(line) and line:match(pattern) then
+                if codeOnly(line):match(pattern) then
                     offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                 end
             end
@@ -171,7 +253,8 @@ function t.table_unpack_always_has_a_51_fallback()
         local lines = readLines(path)
         if lines then
             for n, line in ipairs(lines) do
-                if not isCommentLine(line) and line:find("table%.unpack%(") and not line:find("unpack or", 1, true) then
+                local code = codeOnly(line)
+                if code:find("table%.unpack%(") and not code:find("unpack or", 1, true) then
                     offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                 end
             end
