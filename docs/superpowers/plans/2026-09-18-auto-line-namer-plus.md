@@ -177,7 +177,7 @@ facts.name(lineId)             -- current name, "" if none
 facts.signature(lineId)        -- string, or nil if the line no longer exists
 facts.forLine(lineId, tbl)     -- facts table (C3), or nil if the line no longer exists
 facts.clearCache()             -- forget cached industry lookups
-facts.apiCheck(tbl)            -- array of strings describing: industry lookup per cargo stop, _("Line"), game version
+facts.apiCheck(tbl)            -- array of strings: _("Line") first, then the industry lookup result per cargo stop
 ```
 
 ### C9. `propose` (Task 8)
