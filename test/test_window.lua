@@ -59,25 +59,12 @@ function t.init_adds_exactly_one_button_to_gameInfo()
     eq(#buttons, 1)
 end
 
--- Captures the comp.Window window.init constructs: nothing in the tree from gameInfo reaches it
--- (a Window is not attached under the id it was opened from), so the test intercepts the
--- constructor itself, exactly the way a test spies on any other one-shot factory call.
-local function captureWindow()
-    local captured
-    local realNew = api.gui.comp.Window.new
-    api.gui.comp.Window.new = function(...)
-        captured = realNew(...)
-        return captured
-    end
-    return function() return captured end
-end
-
 -- 2. clicking the top-bar button shows the window; clicking again hides it. -----------------------
 
 function t.clicking_topbar_button_toggles_window_visibility()
     help.reset()
     window.setState(nil)
-    local getWindow = captureWindow()
+    local getWindow = fakeGui.captureNew("comp.Window")
     window.init(noopSend)
 
     local windowWidget = getWindow()
@@ -97,7 +84,7 @@ end
 function t.window_has_four_tabs_with_info_buttons_on_overview_and_each_tab()
     help.reset()
     window.setState(nil)
-    local getWindow = captureWindow()
+    local getWindow = fakeGui.captureNew("comp.Window")
     window.init(noopSend)
     local root = getWindow()
 
@@ -145,7 +132,7 @@ end
 function t.update_with_window_visible_refreshes_once_per_new_version()
     help.reset()
     window.setState(newState(0))
-    local getWindow = captureWindow()
+    local getWindow = fakeGui.captureNew("comp.Window")
     window.init(noopSend)
     getWindow():setVisible(true, false)
 

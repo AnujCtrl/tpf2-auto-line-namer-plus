@@ -1,7 +1,8 @@
 -- Tests for the strict GUI fake (test/fake_gui.lua) and the help system
 -- (help_topics.lua, gui/help.lua).
 local fakeGui = require("fake_gui")
-local eq = require("fake_api").eq
+local fake = require("fake_api")
+local eq = fake.eq
 local log = require("anujctrl/alnp/log")
 local topics = require("anujctrl/alnp/help_topics")
 local help = require("anujctrl/alnp/gui/help")
@@ -80,6 +81,21 @@ function t.fake_inherited_method_works()
     local button = api.gui.comp.Button.new(api.gui.comp.TextView.new("i"), true)
     button:setTooltip("hi")
     eq(button.tooltip, "hi")
+end
+
+-- 1b. fake: captureNew spies on a class's constructor; a reset stops the old getter seeing more. --
+
+function t.fake_captureNew_returns_the_latest_instance_and_stops_after_reset()
+    local getWindow = fakeGui.captureNew("comp.Window")
+    eq(getWindow(), nil)
+
+    local content = api.gui.comp.Component.new("content")
+    local window = api.gui.comp.Window.new("Title", content)
+    eq(getWindow(), window)
+
+    fake.reset()
+    api.gui.comp.Window.new("Title 2", api.gui.comp.Component.new("content 2"))
+    eq(getWindow(), window, "a getter captured before reset must not see constructions after it")
 end
 
 -- 2. fake: handlers fire; find/allText traverse addItem/addTab/setLayout/addRow/constructors. ---

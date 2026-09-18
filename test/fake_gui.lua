@@ -433,4 +433,27 @@ function fakeGui.allText(root)
     return table.concat(parts, "\n")
 end
 
+-- Some widgets (a comp.Window most notably) are never attached under anything a test can reach
+-- from the tree it already has a handle on -- the game hands a Window back to whoever built it,
+-- not to any parent's children. captureNew wraps className's OWN "new" (e.g. "comp.Window") on
+-- the currently installed api.gui, so a test can retrieve the most recent instance afterwards,
+-- without weakening the fake's strictness: the real "new" still runs underneath (still raising if
+-- the class has none, per ctorFor), this only records what it returned.
+--
+-- The wrapper lives on the CURRENTLY installed api.gui.<ns>.<name> table only. fake.reset()
+-- rebuilds api.gui from scratch (a fresh table per class), so a getter obtained before a reset
+-- keeps returning whatever it last captured, but stops seeing anything constructed after the
+-- reset -- the class table it wrapped is no longer the one new code constructs against.
+function fakeGui.captureNew(className)
+    local ns, name = className:match("^(%a+)%.([%w]+)$")
+    local target = api.gui[ns][name]
+    local realNew = target.new
+    local captured = nil
+    target.new = function(...)
+        captured = realNew(...)
+        return captured
+    end
+    return function() return captured end
+end
+
 return fakeGui

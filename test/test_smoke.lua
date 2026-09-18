@@ -37,19 +37,6 @@ local function installCmd(world, scriptData)
     return sent
 end
 
--- window.lua's Window is never reachable from the game-info tree (a Window is not attached under
--- the id it was opened from), so capture the one instance the script's guiInit() constructs by
--- spying on the constructor, the same technique test_window.lua uses.
-local function captureWindow()
-    local captured
-    local realNew = api.gui.comp.Window.new
-    api.gui.comp.Window.new = function(...)
-        captured = realNew(...)
-        return captured
-    end
-    return function() return captured end
-end
-
 local function busWorld()
     return fakeGame.world({
         towns = { [900] = "Springfield", [901] = "Shelbyville" },
@@ -75,7 +62,7 @@ function t.whole_session_boots_renames_and_applies_from_the_gui()
     local sent = installCmd(world, scriptData)
 
     scriptData.load(nil)
-    local getWindow = captureWindow()
+    local getWindow = fakeGui.captureNew("comp.Window")
     scriptData.guiInit()
 
     -- Settle instantly, so the tick right below can rename on its very first pass.
