@@ -4,6 +4,7 @@ local eq = require("fake_api").eq
 local log = require("anujctrl/alnp/log")
 local help = require("anujctrl/alnp/gui/help")
 local settings = require("anujctrl/alnp/settings")
+local sync = require("anujctrl/alnp/gui/sync")
 local schemaForm = require("anujctrl/alnp/gui/schema_form")
 
 local t = {}
@@ -34,9 +35,20 @@ local function recordingSend()
     return calls, send
 end
 
-local function resetAll()
-    schemaForm.reset()
+-- clock: optional, forwarded to schemaForm.reset() -> sync.new(), so a test can advance sync's
+-- timeout deterministically instead of sleeping.
+local function resetAll(clock)
+    schemaForm.reset(clock)
     help.reset()
+end
+
+-- A clock you advance by hand, matching test_sync.lua's helper: clock.now is what sync.new wants.
+local function newClock(t0)
+    local now = t0 or 0
+    return {
+        now = function() return now end,
+        advance = function(dt) now = now + dt end,
+    }
 end
 
 -- 1. build() shows only its own tab's rows; the patterns section shows on neither. -----------------
@@ -342,6 +354,51 @@ function t.slider_construction_failure_falls_back_to_a_text_field()
     eq(#calls, before, "an unparsable number must not send anything")
 
     eq(#lines, 1, "exactly one info log line should have been written for the whole build, not one per row")
+end
+
+-- 9. fix round 1 / F1: the slider fallback's text field must not be clobbered while the player is
+-- mid-edit on text that does not parse yet (most commonly: they cleared it to type a fresh
+-- number), and must catch up once sync's own timeout lets a refresh through. -----------------------
+
+function t.fallback_field_survives_unparsable_text_until_sync_times_out_then_catches_up()
+    local clock = newClock()
+    resetAll(clock.now)
+    api.gui.comp.Slider.new = function() error("no slider in this build") end
+
+    log.reset() -- silence the (expected, already covered by case 8) slider-fallback log line
+    log.sink = function() end
+
+    local state = { settings = settings.defaults() }
+    local calls, send = recordingSend()
+    local advancedComp = schemaForm.build("advanced", state, send)
+
+    local row = findLayoutByFirstLabel(advancedComp, _(settings.row("scan.linesPerTick").label))
+    local field = row.children[2]
+    eq(field.class, "comp.TextInputField")
+    eq(field:getText(), "5")
+
+    -- Reproduces the bug: clearing the field to type a fresh number must not let an immediate
+    -- refresh (with the unchanged old state) snap it back.
+    field:setText("", true)
+    eq(#calls, 0, "clearing to type a fresh number must not send anything")
+    schemaForm.refresh(state) -- state.settings.scan.linesPerTick is still 5 here
+    eq(field:getText(), "", "refresh must not overwrite text the player is still typing")
+
+    -- Typing a real number still sends it, and the engine's echo is still accepted cleanly.
+    field:setText("12", true)
+    eq(#calls, 1)
+    eq(calls[1].name, "set")
+    eq(calls[1].param.path, "scan.linesPerTick")
+    eq(calls[1].param.value, 12)
+    assert(settings.set(state.settings, "scan.linesPerTick", 12)) -- the engine echoes it back
+    schemaForm.refresh(state)
+    eq(field:getText(), "12")
+
+    -- Clear it again (unparsable) and let sync's timeout elapse: only then may a refresh win.
+    field:setText("", true)
+    clock.advance(sync.TIMEOUT)
+    schemaForm.refresh(state)
+    eq(field:getText(), "12", "once the timeout passes, a refresh may show the real value again")
 end
 
 return t

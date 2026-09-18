@@ -21,10 +21,11 @@ local syncInstance = sync.new()
 local loggedSliderFallback = false
 
 -- Forgets every remembered editor and starts a fresh sync instance. guiInit calls this once when
--- the window is (re)built; tests call it after fake.reset().
-function schemaForm.reset()
+-- the window is (re)built; tests call it after fake.reset(). clock: optional, forwarded to
+-- sync.new() (defaults to os.time there); lets a test control sync's timeout without sleeping.
+function schemaForm.reset(clock)
     editorsByPath = {}
-    syncInstance = sync.new()
+    syncInstance = sync.new(clock)
     loggedSliderFallback = false
 end
 
@@ -85,11 +86,14 @@ end
 
 -- The one widget nothing in the two proven sources uses (see the task brief), so its real
 -- behaviour is unverified. Kept as its own function so buildNumericEditor can pcall it and fall
--- back to a text field if construction or any setup call raises.
+-- back to a text field if construction or any setup call raises. new(true): the docs give no
+-- argument list for comp.Slider:new(), but common Transport Fever 2 mod usage passes a boolean,
+-- true for horizontal (controller ruling, fix round 1 / F2).
 local function buildSliderEditor(row, value, send)
-    local slider = api.gui.comp.Slider.new("HORIZONTAL")
+    local slider = api.gui.comp.Slider.new(true)
     slider:setMinimum(row.min)
     slider:setMaximum(row.max)
+    if row.type == "int" then slider:setStep(1) end
     slider:setValue(value, false)
 
     local valueView = api.gui.comp.TextView.new(tostring(value))
@@ -117,6 +121,13 @@ end
 
 -- Bus Line Tool Plus falls back the same way for its colour chooser: a plain text field that only
 -- ever forwards a value it can actually parse as a number.
+--
+-- Fix round 1 / F1: onChange must mark the path pending on EVERY keystroke, not only the ones
+-- that parse. While the player is mid-edit on text that is not (yet) a number -- most commonly
+-- because they cleared the field to type a fresh one, so it is briefly "" -- nothing was pending,
+-- so sync:shouldApply returned true and a refresh clobbered the field back to the old engine
+-- value. Marking pending with the raw text (which can never equal the engine's numeric state)
+-- means sync's own timeout is what eventually lets a refresh through instead.
 local function buildFallbackNumberEditor(row, value, send)
     local field = api.gui.comp.TextInputField.new()
     field:setText(tostring(value), false)
@@ -124,6 +135,8 @@ local function buildFallbackNumberEditor(row, value, send)
         local number = tonumber(text)
         if number ~= nil then
             commitValue(row.path, number, send)
+        else
+            syncInstance:sent(row.path, text)
         end
     end)
     return field, {
@@ -169,7 +182,10 @@ end
 local function buildSectionHeading(section, send)
     local layout = api.gui.layout.BoxLayout.new("HORIZONTAL")
     layout:addItem(api.gui.comp.TextView.new(_(section.label)))
-    layout:addItem(help.buttonFor(_(section.label), section.help))
+    -- Raw section.label, not _(section.label): help.show translates the title again when it
+    -- displays it, so translating here would double-translate (fix round 1 / F3, correcting the
+    -- brief -- buildRow already passed row.label raw for the same reason).
+    layout:addItem(help.buttonFor(section.label, section.help))
 
     local resetButton = api.gui.comp.Button.new(api.gui.comp.TextView.new(_("Reset section")), true)
     resetButton:onClick(function()
