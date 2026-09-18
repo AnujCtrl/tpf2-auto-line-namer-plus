@@ -33,6 +33,7 @@ that everything except one module is plain Lua tested on the host.
 3. Safe rename controls: automatic lock on hand-edited names, per-line lock, preview before a bulk
    rename (§6, §10).
 4. Every tunable is a setting, driven by one schema (§9).
+5. Every UI surface has an info button with full instructions, enforced by a test (§10.1, §12).
 
 Out of scope: sharing code with Bus Line Tool Plus, ring detection, migrating upstream's saved
 settings (a different mod id has no shared save state), auto-colouring lines, export and import of
@@ -70,7 +71,9 @@ Only `facts.lua` reads the game. Everything downstream works on plain tables.
 | `settings.lua` | schema, defaults, `merge`, validated `set(path, value)` (§9) | no |
 | `engine.lua` | engine-thread loop: a few lines per tick → facts → tracker → naming → `setName` | wiring |
 | `gui/window.lua` | window shell, top-bar button, tabs | GUI only |
-| `gui/schema_form.lua` | builds a form from settings schema rows | GUI only |
+| `gui/schema_form.lua` | builds a form from settings schema rows, with an info button per row and section | GUI only |
+| `gui/help.lua` | `help.button(topicKey)` and the shared help panel (§10.1) | GUI only |
+| `help_topics.lua` | plain list of every help topic key | no |
 | `gui/patterns_tab.lua` | default and per-kind patterns with live preview | GUI only |
 | `gui/lines_tab.lua` | line table, locks, preview and apply | GUI + `facts` reads |
 | `log.lua` | prefixed, de-duplicated logging | `print` |
@@ -201,11 +204,12 @@ One schema table in `settings.lua` is the single source of truth. Each row:
 
 ```lua
 { path = "scan.linesPerTick", type = "int", min = 1, max = 50, default = 5,
-  section = "performance", label = "set_scan_lines_per_tick", tooltip = "set_scan_lines_per_tick_tt" }
+  section = "performance", label = "set_scan_lines_per_tick", help = "help_scan_lines_per_tick" }
 ```
 
 Types: `bool`, `int`, `number`, `string`, `enum` (with `values`). Defaults are derived from the
-schema; nothing else holds a default.
+schema; nothing else holds a default. `label` and `help` are both required: a row without help
+text fails the test suite (§12), and the form shows the help behind an info button (§10.1).
 
 - `settings.merge(userDefaults, saved)` deep-merges onto schema defaults and discards unknown or
   invalid values, so old saves load after settings are added or removed.
@@ -257,6 +261,44 @@ Opened from a button in the top game-info bar. Tabs:
   GUI thread in chunks of `preview.linesPerFrame` per `guiUpdate` frame. "Apply checked" sends the
   renames to the engine. Locked and hand-named rows start unchecked.
 
+### 10.1 In-window help
+
+Every UI surface carries an info button, a small button labelled `i` (plain ASCII, because the
+game font may lack a circled-i glyph). Hovering shows the help text as a tooltip; clicking shows
+the same text in a help panel docked at the bottom of the window, which stays until another info
+button or its close button is clicked. The panel exists because a tooltip disappears when the
+mouse moves and is awkward for long text.
+
+Surfaces, each with its own help topic:
+
+| Surface | The help covers |
+|---|---|
+| Top-bar button | what the mod does, in one paragraph (tooltip only) |
+| Window title bar | overview: how lines get named, what locks a line, where settings are stored (per save) and how `user_defaults.lua` changes that |
+| Each tab header | what the tab is for and the usual workflow on it |
+| Each settings section heading | what the section controls as a whole |
+| Each settings row | what the option does, its default, its range or choices, and one example of the effect |
+| Patterns: preset chooser | what each preset produces, and that choosing one overwrites the patterns |
+| Patterns: default row and each kind row | which lines the row applies to, inheritance from the default, the auto-rename and custom check boxes |
+| Patterns: token cheat-sheet | every token with an example value, the `:N`/`u`/`l` modifiers, optional groups `[ ... ]`, upstream aliases, what an unknown token looks like |
+| Lines: each column header | what the column shows; for the lock column, the three lock states (player, edited, prefix) and how to clear each |
+| Lines: "Preview all", "Apply checked", "rename now" | exactly what will and will not be renamed, and that apply cannot be undone except by renaming again |
+| Every "Reset section" and "Reset everything" button | what is reset and what is kept (per-line locks and records are kept) |
+
+Implementation:
+
+- `gui/help.lua` provides `help.button(topicKey)` and the shared `help.panel()`. No other GUI code
+  builds an info button by hand.
+- `help_topics.lua` is a plain table listing every topic key. Settings rows contribute their
+  topics automatically: schema rows carry a required `help` string key (§9), and
+  `gui/schema_form.lua` places an info button on every row and section heading it generates.
+- Help text lives in `strings.lua` under `help_*` keys. It is written in English with explicit
+  line breaks at about 70 characters, so it does not depend on the game wrapping text. Other
+  languages fall back to English until translated.
+- Help text for a settings row is assembled from the schema: the authored explanation plus a
+  generated "Default: … Range: …" line, so the documented default can never disagree with the
+  real one.
+
 ## 11. Errors and logging
 
 - Every engine and GUI entry point runs under `xpcall`; an error is logged with a traceback and
@@ -277,10 +319,20 @@ Host: `lua5.4 test/run.lua` with `test/fake_api.lua`, the same shape as Bus Line
   user-defaults layering.
 - `facts`: against the fake API, including a vanished line and a stop with no town.
 - lint: the translation function `_` is never shadowed (ported from Bus Line Tool Plus).
+- help coverage, so "every surface has help" is enforced rather than remembered:
+  - every schema row and every section has `label` and `help` keys, and both resolve to a
+    non-empty English string in `strings.lua`;
+  - every key in `help_topics.lua` resolves to a non-empty English string;
+  - a static scan of `gui/*.lua` finds every `help.button("<key>")` call and checks the key is in
+    `help_topics.lua`, and that every topic key is used by at least one call or schema row;
+  - the same scan fails if a GUI file creates a tab, a table header or a button without a
+    `help.button` call in the same builder function. Builders are small and one per surface, so
+    this is a function-level check, not a guess about layout.
 
 In game: a README checklist — new line named; editing stops re-names it after the settle delay;
 hand-edited name stays and shows as locked; per-kind pattern applies; preview and apply; a cargo
-line shows industries; no hitch on the largest save with the Lines tab previewing.
+line shows industries; no hitch on the largest save with the Lines tab previewing; every info
+button shows its tooltip on hover and fills the help panel on click, with no text cut off.
 
 ## 13. Risks
 
