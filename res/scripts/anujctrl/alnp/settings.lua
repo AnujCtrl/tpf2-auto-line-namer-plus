@@ -126,7 +126,7 @@ for __, scope in ipairs(kinds.scopes) do
     addRow({ path = "label.scope." .. scope, type = "string", default = SCOPE_TYPE_TEXT[scope], section = "labels",
         label = SCOPE_TYPE_TEXT[scope] .. " label",
         help = "Text substituted for {scope} on " .. scope .. "-scope lines.\n"
-            .. "Example: {scope} {towns} becomes \"" .. SCOPE_TYPE_TEXT[scope] .. " Springfield\"." })
+            .. "Example: {scope} alone renders as \"" .. SCOPE_TYPE_TEXT[scope] .. "\"." })
 end
 
 addRow({ path = "scope.localMaxTowns", type = "int", default = 1, min = 1, max = 5, section = "scope",
@@ -145,8 +145,8 @@ addRow({ path = "sep.towns", type = "string", default = " \226\128\147 ", sectio
 addRow({ path = "sep.via", type = "string", default = ", ", section = "separators",
     label = "Via separator",
     help = "Text placed between intermediate towns listed in {via}.\n"
-        .. "Example: with \", \" a line via two towns reads\n"
-        .. "\"via Ogdenville, North Haverbrook\"." })
+        .. "Example: with \", \", two intermediate towns render as\n"
+        .. "\"Ogdenville, North Haverbrook\" in {via}." })
 addRow({ path = "sep.cargo", type = "string", default = ", ", section = "separators",
     label = "Cargo separator",
     help = "Text placed between individual cargo names listed in\n"
@@ -172,8 +172,8 @@ addRow({ path = "cargo.hidePassengers", type = "bool", default = true, section =
 addRow({ path = "via.max", type = "int", default = 2, min = 0, max = 4, section = "via",
     label = "Max via towns shown",
     help = "Intermediate towns beyond this count are left out of\n"
-        .. "{via}. Example: at 2, a line through four towns shows\n"
-        .. "only the middle two towns." })
+        .. "{via}. Example: at 2, a line via three towns shows just\n"
+        .. "the first two of them." })
 
 addRow({ path = "industry.radius", type = "int", default = 400, min = 50, max = 2000, section = "industry",
     label = "Search radius",

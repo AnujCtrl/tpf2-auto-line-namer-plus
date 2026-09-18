@@ -179,6 +179,25 @@ function t.applyPreset_sets_default_and_blanks_kinds_or_rejects_unknown_key()
     eq(unchanged, settings.defaults())
 end
 
+function t.each_preset_produces_its_exact_patterns_for_every_kind()
+    local expected = {
+        simple = { default = "{type} {towns}[ {n}]",
+            cargo = "{cargo}: {firstIndustry} \226\134\146 {lastIndustry}[ {n}]" },
+        upstream = { default = "{type} {cargo}-{towns:3}-{scope}-{n}", cargo = nil },
+        detailed = { default = "{type} {firstStop} \226\128\147 {lastStop}[ via {via}][ {n}]",
+            cargo = "{cargo}: {firstIndustry} \226\134\146 {lastIndustry}[ via {via}][ {n}]" },
+    }
+    for presetKey, expectation in pairs(expected) do
+        local tbl = settings.defaults()
+        eq(settings.applyPreset(tbl, presetKey), true, presetKey)
+        eq(tbl.patterns.default, expectation.default, presetKey .. " default")
+        for __, kind in ipairs(kinds.list) do
+            local wanted = kinds.cargo[kind] and (expectation.cargo or "") or ""
+            eq(tbl.patterns[kind], wanted, presetKey .. " " .. kind)
+        end
+    end
+end
+
 function t.resetSection_restores_only_its_own_rows()
     local tbl = settings.defaults()
     tbl.scan.linesPerTick = 40
