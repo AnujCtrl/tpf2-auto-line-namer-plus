@@ -29,9 +29,11 @@ local scanTotal = 0    -- #scanIds at the moment the scan started
 local scanChanged = 0  -- rows that started ticked, counted as the scan proceeds
 local scanTaken = nil  -- { [numberKey] = { [n] = true, ... } }, mutated as proposals are made
 local scanWords = nil  -- tracker.defaultWords(state.settings, _("Line")), computed once per scan
+local scanDecideView = nil -- state.settings seen with enabled = true, for tracker.decide (see addRow)
 
 local everPreviewed = false
 local lastRefreshAt = nil
+local pendingRefresh = nil -- a state refresh() had to drop to the throttle, awaiting update()
 
 local LOCK_LABEL = {
     player = "locked",
@@ -77,9 +79,13 @@ local function addRow(id, f, tbl)
 
     local lock = tracker.lockState(record, f.name, tbl)
     local hasProposal = name ~= nil
+    -- decide() is asked with kindAutoRename = true and, through scanDecideView, enabled = true:
+    -- the preview answers "may the mod touch this name", not "is automatic renaming switched on".
+    -- Both switches only govern the engine's own passes; an explicit Apply works regardless, and
+    -- the engine's apply handler does not consult `enabled` either.
     local checked = false
     if hasProposal and name ~= f.name and lock == nil then
-        checked = tracker.decide(record, f.name, true, tbl, scanWords) == "rename"
+        checked = tracker.decide(record, f.name, true, scanDecideView, scanWords) == "rename"
     end
     if checked then scanChanged = scanChanged + 1 end
 
@@ -94,9 +100,12 @@ local function addRow(id, f, tbl)
     lockBox:setSelected(lock ~= nil, false)
     local renameButton = api.gui.comp.Button.new(api.gui.comp.TextView.new(_("Rename now")), true)
 
+    -- nameAtPreview is what the proposal was computed against; the engine is told it with every
+    -- apply item and refuses anything whose line has been renamed since (see engine handlers.apply).
     local row = {
         id = id, applyBox = applyBox, currentView = currentView, proposedView = proposedView,
         lockBox = lockBox, name = name, n = n, key = key, hasProposal = hasProposal, lock = lock,
+        nameAtPreview = f.name, stale = false,
     }
     rows[#rows + 1] = row
 
@@ -120,12 +129,18 @@ local function addRow(id, f, tbl)
 end
 
 local function startScan()
+    -- The GUI thread holds its own copy of facts.lua, and so its own industry cache; the engine's
+    -- clearCache() calls never reach it. "Preview all" is the one place that can go stale, so it
+    -- starts from nothing rather than from whatever the first preview of the session saw.
+    facts.clearCache()
     scanIds = facts.playerLines()
     scanIndex = 1
     scanTotal = #scanIds
     scanChanged = 0
     scanTaken = propose.takenByKey(state.records, nil)
     scanWords = tracker.defaultWords(state.settings, _("Line"))
+    scanDecideView = setmetatable({ enabled = true }, { __index = state.settings })
+    pendingRefresh = nil -- these rows are built from live facts; a dropped refresh has nothing to add
     tableWidget:deleteAll()
     rows = {}
     everPreviewed = true
@@ -136,8 +151,9 @@ local function applyChecked()
     local renames = {}
     local checkedRows = {}
     for __, row in ipairs(rows) do
-        if row.hasProposal and row.applyBox:isSelected() then
-            renames[#renames + 1] = { line = row.id, name = row.name, n = row.n, key = row.key }
+        if row.hasProposal and not row.stale and row.applyBox:isSelected() then
+            renames[#renames + 1] = { line = row.id, name = row.name, from = row.nameAtPreview,
+                n = row.n, key = row.key }
             checkedRows[#checkedRows + 1] = row
         end
     end
@@ -187,6 +203,10 @@ function linesTab.build(newState, newSend)
     local placeholder = api.gui.comp.Component.new(" ")
     local scrollArea = api.gui.comp.ScrollArea.new(placeholder, " ")
     scrollArea:setContent(tableWidget)
+    -- Caps the table's height inside the 900x600 window (window.lua), leaving room for the button
+    -- row, the tab strip and the docked help panel; comp.Component:setMaximumSize is documented,
+    -- and is how the bus line tool sizes its own scroll area.
+    scrollArea:setMaximumSize(api.gui.util.Size.new(860, 380))
     outer:addItem(scrollArea)
 
     previewButton:onClick(startScan)
@@ -197,13 +217,7 @@ function linesTab.build(newState, newSend)
     return component
 end
 
-function linesTab.refresh(newState)
-    state = newState
-    if not everPreviewed then return end
-    local now = linesTab.clock()
-    if lastRefreshAt and (now - lastRefreshAt) < 1 then return end
-    lastRefreshAt = now
-
+local function applyRefresh()
     local tbl = state.settings
     for __, row in ipairs(rows) do
         local currentName = facts.name(row.id)
@@ -211,10 +225,43 @@ function linesTab.refresh(newState)
         local lock = tracker.lockState(state.records[row.id], currentName, tbl)
         row.lock = lock
         row.lockBox:setText(lockLabelFor(lock))
+        row.lockBox:setSelected(lock ~= nil, false)
+        -- The proposal was computed against a name (and an unlocked state) that no longer holds,
+        -- so this row is stale: it is untickable until the player previews again. Staleness never
+        -- clears on its own -- a name that changed back is still a name the mod did not propose for.
+        if not row.stale and (currentName ~= row.nameAtPreview or lock ~= nil) then
+            row.stale = true
+            row.applyBox:setSelected(false, false)
+            row.proposedView:setText(_("(name changed: preview again)"))
+        end
     end
 end
 
+-- window.lua records a version as refreshed before it calls us, so a state the throttle drops is
+-- never offered again: it is kept here and applied by the next update() once the second is up.
+function linesTab.refresh(newState)
+    state = newState
+    if not everPreviewed then return end
+    local now = linesTab.clock()
+    if lastRefreshAt and (now - lastRefreshAt) < 1 then
+        pendingRefresh = newState
+        return
+    end
+    pendingRefresh = nil
+    lastRefreshAt = now
+    applyRefresh()
+end
+
 function linesTab.update()
+    if pendingRefresh then
+        local now = linesTab.clock()
+        if not lastRefreshAt or (now - lastRefreshAt) >= 1 then
+            state = pendingRefresh
+            pendingRefresh = nil
+            lastRefreshAt = now
+            applyRefresh()
+        end
+    end
     if not scanIds then return end
     local tbl = state.settings
     local budget = tbl.preview.linesPerFrame
@@ -231,6 +278,7 @@ function linesTab.update()
         scanIds = nil
         scanTaken = nil
         scanWords = nil
+        scanDecideView = nil
     else
         statusView:setText(scanningStatus(scanIndex - 1, scanTotal))
     end
@@ -248,8 +296,10 @@ function linesTab.reset()
     scanChanged = 0
     scanTaken = nil
     scanWords = nil
+    scanDecideView = nil
     everPreviewed = false
     lastRefreshAt = nil
+    pendingRefresh = nil
     linesTab.clock = os.time
 end
 

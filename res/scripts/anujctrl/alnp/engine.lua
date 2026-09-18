@@ -14,9 +14,21 @@ local runtime = {}   -- [lineId] = { signature = s, changedAt = seconds or nil }
 local queue, cursor = {}, 0
 local defaultWords   -- cache, cleared whenever a setting changes
 
+-- A mod folder with no user_defaults.lua is perfectly normal, so a "not found" is silent. A file
+-- that IS there and fails to load (a syntax error the player introduced) is not: without a word
+-- in the log their overrides would simply vanish, with nothing to point at.
+local USER_DEFAULTS = "anujctrl/alnp/user_defaults"
+
 local function userDefaults()
-    local ok, overrides = pcall(require, "anujctrl/alnp/user_defaults")
-    if ok and type(overrides) == "table" then return overrides end
+    local ok, overrides = pcall(require, USER_DEFAULTS)
+    if ok then
+        if type(overrides) == "table" then return overrides end
+        return nil
+    end
+    local message = tostring(overrides)
+    if not message:find("module '" .. USER_DEFAULTS .. "' not found", 1, true) then
+        log.error("user_defaults.lua could not be loaded, ignoring it: " .. message)
+    end
     return nil
 end
 
@@ -160,20 +172,28 @@ function handlers.lock(param, now)
     if runtime[lineId] then runtime[lineId].changedAt = now end
 end
 
--- The player ticked these rows in the Lines tab and pressed "Apply checked".
-function handlers.apply(param)
-    for __, item in ipairs(param.renames or {}) do
-        local lineId, name = tonumber(item.line), item.name
-        if lineId and type(name) == "string" and name:match("%S") and facts.signature(lineId) then
-            local record = recordFor(lineId)
-            record.lastAssigned, record.number, record.numberKey = name, tonumber(item.n), item.key
-            if record.locked == "edited" then record.locked = nil end
-            if name ~= facts.name(lineId) then
-                api.cmd.sendCommand(api.cmd.make.setName(lineId, name))
-                log.info(('renamed line %d to "%s" (applied from the Lines tab)'):format(lineId, name))
-            end
-        end
+-- The player ticked these rows in the Lines tab and pressed "Apply checked". Each item carries
+-- `from`: the name the Lines tab saw when it built that row's proposal. The engine is the
+-- authority on whether that is still true -- if the line has been renamed since (by the player,
+-- by another mod, by an earlier apply), the item is dropped rather than overwriting a name the
+-- player never offered up. The GUI unticks such rows too, but this check is what guarantees it.
+local function applyOne(item)
+    local lineId, name = tonumber(item.line), item.name
+    if not (lineId and type(name) == "string" and name:match("%S") and facts.signature(lineId)) then return end
+    if type(item.from) ~= "string" or facts.name(lineId) ~= item.from then
+        return log.info(("apply skipped for line %d: its name changed since the preview"):format(lineId))
     end
+    local record = recordFor(lineId)
+    record.lastAssigned, record.number, record.numberKey = name, tonumber(item.n), item.key
+    if record.locked == "edited" then record.locked = nil end
+    if name ~= facts.name(lineId) then
+        api.cmd.sendCommand(api.cmd.make.setName(lineId, name))
+        log.info(('renamed line %d to "%s" (applied from the Lines tab)'):format(lineId, name))
+    end
+end
+
+function handlers.apply(param)
+    for __, item in ipairs(param.renames or {}) do applyOne(item) end
 end
 
 -- "rename now" on one row: the player asked, so the tracker is not consulted.
@@ -187,8 +207,14 @@ function handlers.preset(param, now)
     if settings.applyPreset(state.settings, param.key) then rescan(now) end
 end
 
+-- "Reset section" restores what a brand-new save would start with for those rows -- the shipped
+-- defaults with user_defaults.lua laid over them -- exactly as "Reset everything" does below, so
+-- the two buttons can never disagree about what "default" means.
 function handlers.resetSection(param, now)
-    settings.resetSection(state.settings, param.section)
+    local fresh = settings.merge(userDefaults(), nil)
+    for __, row in ipairs(settings.rowsIn(param.section)) do
+        settings.set(state.settings, row.path, settings.get(fresh, row.path))
+    end
     defaultWords = nil
     facts.clearCache()
     log.setLevel(state.settings.log.level)

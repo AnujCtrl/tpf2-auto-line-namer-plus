@@ -432,6 +432,36 @@ function t.apply_checked_sends_ticked_rows_then_nothing_on_second_click()
 end
 
 -- ------------------------------------------------------------------------------------------
+-- 5b (A1). The headline promise: a row whose line the player renamed after the preview is
+-- unticked by the next refresh, marked stale, and never sent by "Apply checked". Every item that
+-- IS sent carries `from`, the name the row saw at preview time, so the engine can check it too.
+-- ------------------------------------------------------------------------------------------
+function t.a_hand_rename_after_the_preview_unticks_the_row_and_apply_skips_it()
+    linesTab.reset()
+    help.reset()
+    local world = buildWorld()
+    local state = newState()
+    local send, calls = recordingSend()
+    local component = linesTab.build(state, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+    eq(table_.rows[1][1]:isSelected(), true, "line 1 starts ticked (default name)")
+
+    world.renameLine(1, "Airport Express")
+    linesTab.clock = function() return 5000 end
+    linesTab.refresh(state)
+
+    eq(table_.rows[1][1]:isSelected(), false, "the renamed row must be unticked")
+    eq(fakeGui.text(table_.rows[1][4]), "(name changed: preview again)")
+
+    clickLabelled(component, "Apply checked")
+    local byLine = renamesByLine(calls)
+    eq(byLine[1], nil, "the hand-renamed line must not be applied")
+    assert(byLine[2] ~= nil, "the untouched default-named line is still applied")
+    eq(byLine[2].from, "Line 2", "every apply item carries the name seen at preview time")
+end
+
+-- ------------------------------------------------------------------------------------------
 -- 6. Lock box: ticking sends lock=true; unticking a player lock sends lock=false; unticking
 --    an edited (or prefix) lock sends nothing, re-ticks itself, and explains in the status.
 -- ------------------------------------------------------------------------------------------
@@ -550,6 +580,129 @@ function t.refresh_after_preview_updates_rows_without_reading_facts_again()
     linesTab.clock = function() return 1001 end
     linesTab.refresh(state)
     eq(fakeGui.text(table_.rows[3][3]), "Renamed Again")
+end
+
+-- ------------------------------------------------------------------------------------------
+-- 10 (A2). window.lua marks a version as refreshed before calling the tabs, so a refresh the
+-- one-second throttle drops would otherwise be lost for good. The dropped state is kept and
+-- applied by the next update() once the second has passed.
+-- ------------------------------------------------------------------------------------------
+function t.a_throttled_refresh_is_retried_by_the_next_update()
+    linesTab.reset()
+    help.reset()
+    local world = buildWorld()
+    local state = newState()
+    local component = linesTab.build(state, function() end)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    linesTab.clock = function() return 2000 end
+    world.renameLine(3, "First Rename")
+    linesTab.refresh(state)
+    eq(fakeGui.text(table_.rows[3][3]), "First Rename", "the first refresh in a second goes through")
+
+    -- Same second: this state is dropped by the throttle, but must not be forgotten.
+    world.renameLine(3, "Second Rename")
+    local lockedState = newState({ [3] = { locked = "player" } })
+    linesTab.refresh(lockedState)
+    eq(fakeGui.text(table_.rows[3][3]), "First Rename", "still throttled within the same second")
+
+    linesTab.update() -- same second still: nothing to apply yet
+    eq(fakeGui.text(table_.rows[3][3]), "First Rename", "update() must respect the throttle too")
+
+    linesTab.clock = function() return 2001 end
+    linesTab.update()
+    eq(fakeGui.text(table_.rows[3][3]), "Second Rename", "the dropped refresh is applied a second later")
+    eq(fakeGui.text(table_.rows[3][5]), "locked", "and it carries the dropped state's lock label")
+end
+
+-- ------------------------------------------------------------------------------------------
+-- 11 (A3). refresh() syncs the lock box's tick, not only its label, and does so silently: a
+-- setSelected that emitted would fire the row's own onToggle and send a bogus lock event back.
+-- ------------------------------------------------------------------------------------------
+function t.refresh_syncs_the_lock_boxes_tick_without_sending_events()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local send, calls = recordingSend()
+    local component = linesTab.build(newState(), send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    local lockBox3 = table_.rows[3][5]
+    eq(lockBox3:isSelected(), false, "line 3 has no record and starts unlocked")
+
+    -- The engine auto-locked line 3 (the player edited its name).
+    linesTab.clock = function() return 3000 end
+    linesTab.refresh(newState({ [3] = { locked = "edited" } }))
+    eq(lockBox3:isSelected(), true, "an auto-locked row shows a ticked lock box")
+    eq(fakeGui.text(lockBox3), "locked: you edited the name")
+
+    -- ...and the lock went away again (the engine renamed it, clearing the "edited" flag).
+    linesTab.clock = function() return 3001 end
+    linesTab.refresh(newState({ [3] = {} }))
+    eq(lockBox3:isSelected(), false, "a cleared lock unticks the box")
+    eq(fakeGui.text(lockBox3), "")
+
+    eq(#calls, 0, "syncing the tick must never send a lock event")
+end
+
+-- ------------------------------------------------------------------------------------------
+-- 12 (A6). "Preview all" clears the industry cache first. The GUI thread has its own copy of
+-- facts.lua's cache, and nothing else on this thread ever clears it, so without this a stop's
+-- industry is frozen at whatever the first preview of the session happened to see.
+-- ------------------------------------------------------------------------------------------
+function t.preview_all_clears_the_industry_cache_before_reading_anything()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local component = linesTab.build(newState(), function() end)
+
+    local realClearCache, realForLine = facts.clearCache, facts.forLine
+    local clears, readsBeforeFirstClear = 0, 0
+    facts.clearCache = function(...)
+        clears = clears + 1
+        return realClearCache(...)
+    end
+    facts.forLine = function(...)
+        if clears == 0 then readsBeforeFirstClear = readsBeforeFirstClear + 1 end
+        return realForLine(...)
+    end
+
+    previewAllAndDrain(component)
+    facts.clearCache, facts.forLine = realClearCache, realForLine
+
+    eq(clears, 1, "Preview all must clear the industry cache exactly once")
+    eq(readsBeforeFirstClear, 0, "and before it reads any line")
+end
+
+-- ------------------------------------------------------------------------------------------
+-- 13 (A6). The preview already ignores a kind's auto-rename switch (it asks tracker.decide with
+-- kindAutoRename = true), so it must ignore the master switch too, or "Preview all" with the mod
+-- switched off reports "0 would change" and ticks nothing -- while the same tab with only the bus
+-- kind switched off ticks everything. The engine's apply handler never consults `enabled`, so the
+-- rows it then sends really are applied.
+-- ------------------------------------------------------------------------------------------
+function t.preview_with_the_master_switch_off_still_ticks_and_applies_rows()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local tbl = settings.defaults()
+    assert(settings.set(tbl, "enabled", false))
+    local send, calls = recordingSend()
+    local component = linesTab.build({ settings = tbl, records = defaultRecords() }, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    eq(table_.rows[1][1]:isSelected(), true, "a default-named line is still ticked with the mod off")
+    eq(table_.rows[4][1]:isSelected(), false, "a locked line is still left unticked")
+    assert(not fakeGui.text(findStatus(component)):find("0 would change", 1, true),
+        "the status must not claim nothing would change: " .. fakeGui.text(findStatus(component)))
+
+    clickLabelled(component, "Apply checked")
+    local byLine = renamesByLine(calls)
+    assert(byLine[1] ~= nil and byLine[2] ~= nil, "the ticked rows are sent to the engine")
+    eq(byLine[1].from, "Line 1")
 end
 
 return t

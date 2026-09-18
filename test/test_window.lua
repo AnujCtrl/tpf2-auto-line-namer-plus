@@ -150,6 +150,26 @@ function t.update_with_window_visible_refreshes_once_per_new_version()
     eq(counts.linesTab, 1)
 end
 
+-- 5b (A4). The window is given a size; without one the game opens it collapsed around its
+-- content. Upstream used 850 by 500; this mod's Lines table needs more room, so 900 by 600.
+
+function t.window_is_given_a_size_of_900_by_600()
+    help.reset()
+    window.setState(nil)
+    local getWindow = fakeGui.captureNew("comp.Window")
+    window.init(noopSend)
+
+    local sizeCall = nil
+    for __, call in ipairs(getWindow().calls) do
+        if call.name == "setSize" then sizeCall = call end
+    end
+    assert(sizeCall, "window.init must call setSize on the window")
+    local size = sizeCall.args[1]
+    assert(type(size) == "table" and size.class == "util.Size", "setSize takes an api.gui.util.Size")
+    eq(size.args[1], 900)
+    eq(size.args[2], 600)
+end
+
 -- 6. a nil gameInfo logs an error and does not raise. ----------------------------------------------
 
 function t.nil_gameInfo_logs_an_error_and_does_not_raise()

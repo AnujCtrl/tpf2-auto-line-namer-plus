@@ -85,6 +85,10 @@ function window.init(send)
 
     windowComponent = api.gui.comp.Window.new(_("Auto Line Namer Plus"), content)
     windowComponent:addHideOnCloseHandler()
+    -- Without an explicit size the game opens the window collapsed around its content. Upstream
+    -- used 850 by 500; the Lines table wants more room, and the player can resize from there.
+    windowComponent:setSize(api.gui.util.Size.new(900, 600))
+    windowComponent:setResizable(true)
     windowComponent:setVisible(false, false)
     lastRefreshedVersion = buildState.version
 

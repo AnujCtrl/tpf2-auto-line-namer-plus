@@ -14,11 +14,12 @@ function t.case14_apply_renames_listed_lines_and_skips_blank_or_vanished()
     world.removeLine(3)
     local sent = H.installCmd(world)
     local engine = H.freshEngine(H.saved({}))
+    -- `from` is the name the Lines tab saw at preview time; here every line still has it (A1).
     engine.handleEvent("apply", { renames = {
-        { line = 1, name = "Bus Springfield", n = 2, key = "k1" },
-        { line = 2, name = "   ", n = 1, key = "k2" },
-        { line = 3, name = "Ghost Renamed", n = 1, key = "k3" },
-        { line = 4, name = "Already Right", n = 3, key = "k4" },
+        { line = 1, name = "Bus Springfield", from = "Line 1", n = 2, key = "k1" },
+        { line = 2, name = "   ", from = "Blanky", n = 1, key = "k2" },
+        { line = 3, name = "Ghost Renamed", from = "Ghost", n = 1, key = "k3" },
+        { line = 4, name = "Already Right", from = "Already Right", n = 3, key = "k4" },
     } })
     local records = engine.save().records
     eq(records[1], { lastAssigned = "Bus Springfield", number = 2, numberKey = "k1" })
@@ -27,6 +28,38 @@ function t.case14_apply_renames_listed_lines_and_skips_blank_or_vanished()
     eq(records[4], { lastAssigned = "Already Right", number = 3, numberKey = "k4" })
     eq(#sent, 1)
     eq(sent[1], { id = 1, name = "Bus Springfield" })
+end
+
+-- A1: the engine is the authority. Every apply item carries `from`, the name the Lines tab saw
+-- when it built the preview. If the line's name has moved on since (the player renamed it by
+-- hand), the item is dropped: no command, no record change, one log line.
+function t.case14b_apply_skips_items_whose_name_changed_since_the_preview()
+    local world = H.world({ [1] = H.busLine("Line 1"), [2] = H.busLine("Line 2") })
+    local sent = H.installCmd(world)
+    local engine, logs = H.freshEngine(H.saved({}))
+    world.renameLine(1, "Airport Express") -- the player renamed it after the preview
+    engine.handleEvent("apply", { renames = {
+        { line = 1, name = "Bus Springfield", from = "Line 1", n = 1, key = "k1" },
+        { line = 2, name = "Bus Shelbyville", from = "Line 2", n = 2, key = "k2" },
+    } })
+    eq(#sent, 1, "only the line whose name is unchanged may be renamed")
+    eq(sent[1], { id = 2, name = "Bus Shelbyville" })
+    eq(engine.save().records[1], nil, "the skipped line's record must be untouched")
+    local skipped = false
+    for __, line in ipairs(logs) do
+        if line:find("apply skipped for line 1", 1, true) then skipped = true end
+    end
+    eq(skipped, true, "the skip must be logged")
+end
+
+-- An item with no `from` at all (an old GUI, or a hand-made event) is never trusted.
+function t.case14c_apply_without_a_from_field_sends_nothing()
+    local world = H.world({ [1] = H.busLine("Line 1") })
+    local sent = H.installCmd(world)
+    local engine = H.freshEngine(H.saved({}))
+    engine.handleEvent("apply", { renames = { { line = 1, name = "Bus Springfield", n = 1, key = "k1" } } })
+    eq(#sent, 0, "an item with no `from` must be dropped")
+    eq(engine.save().records[1], nil)
 end
 
 function t.case15_rename_now_ignores_lock_but_only_clears_edited()
@@ -107,6 +140,78 @@ function t.case17_preset_resetSection_resetAll_change_settings_and_resetAll_keep
     engine.handleEvent("resetAll", {})
     eq(engine.save().settings.patterns.default, "{type} {towns}[ {n}]")
     eq(engine.save().records[1].lastAssigned, before)
+end
+
+-- A5. "Reset section" and "Reset everything" must restore the same thing: what a brand-new save
+-- would start with, i.e. the shipped defaults with user_defaults.lua laid over them.
+local function withUserDefaults(overrides, fn)
+    local key = "anujctrl/alnp/user_defaults"
+    local real = package.loaded[key]
+    package.loaded[key] = overrides
+    local ok, err = pcall(fn)
+    package.loaded[key] = real
+    if not ok then error(err, 0) end
+end
+
+function t.case17b_resetSection_restores_the_user_defaults_not_the_shipped_ones()
+    local world = H.world({ [1] = H.busLine("Line 1") })
+    H.installCmd(world)
+    withUserDefaults({ lock = { prefix = "!" }, reload = { names = "rr" } }, function()
+        local engine = H.freshEngine(nil) -- a new save: load() reads user_defaults itself
+        eq(engine.save().settings.lock.prefix, "!", "a new save starts from user_defaults.lua")
+
+        engine.handleEvent("set", { path = "lock.prefix", value = "#" })
+        engine.handleEvent("set", { path = "reload.names", value = "zzz" })
+        engine.handleEvent("resetSection", { section = "general" })
+        eq(engine.save().settings.lock.prefix, "!", "resetSection restores the user default, not \"\"")
+        eq(engine.save().settings.reload.names, "rr")
+
+        engine.handleEvent("set", { path = "lock.prefix", value = "#" })
+        engine.handleEvent("resetAll", {})
+        eq(engine.save().settings.lock.prefix, "!", "resetAll restores the same thing")
+    end)
+end
+
+-- A6. A mod folder with no user_defaults.lua at all is normal and stays silent; a file that IS
+-- there but does not load (a syntax error the player introduced) must say so, or the player's
+-- overrides vanish with no explanation at all.
+local UD_KEY = "anujctrl/alnp/user_defaults"
+
+local function withoutUserDefaultsModule(replacement, fn)
+    local realLoaded, realPreload, realPath = package.loaded[UD_KEY], package.preload[UD_KEY], package.path
+    package.loaded[UD_KEY], package.preload[UD_KEY] = nil, replacement
+    package.path = "./no-such-directory/?.lua"
+    local ok, err = pcall(fn)
+    package.loaded[UD_KEY], package.preload[UD_KEY], package.path = realLoaded, realPreload, realPath
+    if not ok then error(err, 0) end
+end
+
+local function linesMentioning(logs, needle)
+    local found = 0
+    for __, line in ipairs(logs) do
+        if line:find(needle, 1, true) then found = found + 1 end
+    end
+    return found
+end
+
+function t.case21_a_missing_user_defaults_file_is_silent()
+    H.world({ [1] = H.busLine("Line 1") })
+    withoutUserDefaultsModule(nil, function()
+        local engine, logs = H.freshEngine(nil)
+        eq(linesMentioning(logs, "user_defaults"), 0, "a missing user_defaults.lua must not be reported")
+        eq(engine.save().settings.enabled, true, "and the shipped defaults are used")
+    end)
+end
+
+function t.case22_a_broken_user_defaults_file_is_logged_once()
+    H.world({ [1] = H.busLine("Line 1") })
+    local broken = function() error("user_defaults.lua:19: unexpected symbol near ','", 0) end
+    withoutUserDefaultsModule(broken, function()
+        local engine, logs = H.freshEngine(nil)
+        eq(linesMentioning(logs, "user_defaults"), 1, "a broken user_defaults.lua is reported once")
+        eq(linesMentioning(logs, "unexpected symbol"), 1, "and the report carries the real message")
+        eq(engine.save().settings.enabled, true, "the mod still starts, on the shipped defaults")
+    end)
 end
 
 function t.case18_save_load_round_trip_normalizes_records()
