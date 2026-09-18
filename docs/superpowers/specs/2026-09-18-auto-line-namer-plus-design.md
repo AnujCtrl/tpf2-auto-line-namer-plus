@@ -198,7 +198,8 @@ Shipped defaults:
 
 Three built-in presets selectable in the Patterns tab: **Simple** (the shipped defaults),
 **Upstream** (`{type} {cargo}-{towns:3}-{scope}-{n}` for every kind), **Detailed**
-(`{type} {firstStop} – {lastStop}[ via {via}][ {n}]`). Choosing a preset overwrites the patterns
+(`{type} {firstStop} – {lastStop}[ via {via}][ {n}]`, and for the cargo kinds
+`{cargo}: {firstIndustry} → {lastIndustry}[ via {via}][ {n}]`). Choosing a preset overwrites the patterns
 after a confirmation.
 
 ## 9. Settings

@@ -1,203 +1,216 @@
-# Auto Line Namer (ALN)
+# Auto Line Namer Plus
 
-Auto Line Namer automatically generates consistent, human-friendly names for transport lines in Transport Fever 2 using customizable naming conventions. It inspects line properties, vehicles and connected towns, then builds a name using a user-defined convention.
+Transport Fever 2 mod that names every line for you, from its stops, towns, industries and
+cargo. It never overwrites a name you wrote yourself, costs a fixed amount of work per game
+tick no matter how large the save is, and exposes every tunable as a setting with an in-window
+"i" button explaining it. A fork of erkanercan's Auto Line Namer, rebuilt from the ground up so
+that everything except the code that reads the game is plain Lua, tested on the host.
 
-This README covers installation, a quick GUI walkthrough, how conventions work, troubleshooting, and developer notes for contributors.
+## How names are chosen, and when a line is left alone
 
-## Quick start
+Every game tick the engine checks `scan.linesPerTick` lines, in round-robin order. For each
+line it computes a cheap signature (stop station-group ids, vehicle count, current name). If
+the signature has not changed since last time, nothing else happens. If it changed, a settle
+timer starts; only once the signature has been stable for `scan.settleSeconds` real seconds does
+the mod read the line's full facts and decide what to do. The delay is measured with the
+system clock, so it behaves the same whether the game is paused or running at high speed.
 
-1. Install from Steam Workshop or deploy locally (see "Local deploy").
-2. Start Transport Fever 2 and load a save.
-3. Click the ALN button in the game info bar to open settings.
-4. Configure the naming convention and options. A live preview shows the result.
-5. Create or edit a line. ALN will rename lines according to settings. You can also force a rename manually by setting the line name to `r` or `reload` and then toggling the "Add station" button in the line editor (toggle off then on) — this triggers a rename without repeatedly calling the renamer.
+Once a line settles, the mod checks these conditions in order, and stops at the first match:
 
-## Mod info
+1. The mod is disabled, or auto-rename is turned off for that line's kind — left alone.
+2. You ticked the lock box for the line on the Lines tab — left alone.
+3. The name starts with the configured "never-rename prefix" — left alone.
+4. The name is one of the reload-trigger words (`r`, `reload` by default) — renamed.
+5. The name looks like a game default name (see below) and that is enabled — renamed.
+6. The name is exactly what the mod named it last time, and re-renaming mod-assigned names is
+   enabled — renamed.
+7. The name is exactly what the mod named it last time, but that setting is off — left alone.
+8. Anything else — you typed it yourself. If auto-lock is on, the line is locked (shown as
+   "edited" on the Lines tab) and left alone from then on; if auto-lock is off, it is just left
+   alone.
 
-- Name: Auto Line Namer 0.2.0
-- Author: erkanercan
+A "game default name" is `Line 12` (or its translated equivalent, e.g. `Linie 12` in German —
+see the first-launch checklist below), plus any comma-separated word you add under "Extra
+default-name words".
 
-Note: the deploy helper's default target base uses a specific Steam userdata path inside $HOME. The script will remove an existing folder with the same mod name before copying. If your Steam userdata path differs, pass a custom path to `./scripts/deploy_mod.sh` or edit the script.
+Three rules apply no matter what the settings say:
 
-## Installation
+- The mod never sends a rename when the new name is identical to the current one.
+- The mod never assigns an empty or whitespace-only name.
+- A line with fewer distinct stops than "Minimum stops" (default 2) is left alone.
 
-Option A — Steam Workshop
+A line id that no longer exists is dropped from the mod's records. Per-line locks and the name
+the mod last assigned are saved with the line; scan signatures and settle timers are not saved
+and start fresh each time the game loads.
 
-- Subscribe on the Workshop page and enable the mod in the game's mod list.
+## Patterns and tokens
 
-Option B — Local deploy (developer/test)
+A pattern is a template made of tokens, e.g. `{type} {towns}[ {n}]`, rendered against a line's
+own facts. Every line kind uses the default pattern (Advanced tab) unless the Patterns tab gives
+it a custom pattern of its own. Each kind also has its own auto-rename switch (default on), so
+you can turn off, say, trains and rename them by hand while everything else keeps auto-renaming.
 
-- Use the provided helper to copy the repository into your local TF2 mods folder (overwrites existing mod folder with the same name):
+### Tokens
 
-```bash
-./scripts/deploy_mod.sh
-# (optionally) ./scripts/deploy_mod.sh /custom/path/to/mods
-```
+| Token | Example | Meaning | Upstream alias |
+|---|---|---|---|
+| `{type}` | `Bus` | The line's kind, from the label settings. | `{transportType}` |
+| `{scope}` | `Intercity` | The line's scope: Local, Intercity or Regional. | `{lineType}` |
+| `{cargo}` | `Coal, Iron ore` | Cargo carried, joined by the cargo separator; collapses to the mixed-cargo label past the maximum; hidden on passenger-only lines by default. | `{cargoTypes}` |
+| `{towns}` | `Springfield – Shelbyville` | First and last town, or the one town if there is only one. | `{townNames}` |
+| `{firstTown}` | `Springfield` | The first town on the line. | — |
+| `{lastTown}` | `Shelbyville` | The last town on the line. | — |
+| `{via}` | `Ogdenville, North Haverbrook` | Up to "Max via towns shown" intermediate towns, neither end town. | — |
+| `{firstStop}` | `Springfield Central` | Station name at the first stop. | — |
+| `{lastStop}` | `Shelbyville East` | Station name at the last stop. | — |
+| `{firstIndustry}` | `Coal mine` | Industry nearest the first stop within the search radius, else the fallback (stop name, town name, or empty). | — |
+| `{lastIndustry}` | `Steel mill` | Industry nearest the last stop, same fallback rule. | — |
+| `{n}` | `2` | Sequence number that tells apart otherwise-identical names (see Numbering below). | `{lineNumber}` |
 
-The script uses your $HOME folder by default and will copy the current repo into the Steam userdata local/mods folder.
+"Last" always means the last stop in the line's stop order, so a line visiting A, B, C, B ends
+at C.
 
-## GUI & Settings (what to expect)
+### Modifiers
 
-- The ALN button is added to the game info bar. Click it to open the settings window.
-- Tabs: General, Transport Types, Line Types, Cargo Types, Town Names, Debug.
-- General tab contains: enable toggle, tag-prefix to exclude lines, active convention string, auto-update settings and a live Preview.
-- The Preview updates live when you change any related setting (convention, transport type labels, cargo/town show-type, separators, etc.).
+Add modifiers after a colon, in any order:
 
-Tip: the convention preview shows a sample name using representative values so you can validate the pattern before applying it to real lines.
+- A number keeps that many characters of each word in the token's value and joins them back
+  together with no spaces, e.g. `{towns:3}` → `Spr – She`. A multi-word value truncates per
+  word: `New York` at `:3` becomes `NewYor`.
+- `u` upper-cases the value; `l` lower-cases it. `{firstTown:3u}` → `SPR`.
 
-## Naming conventions and variables
+### Optional groups
 
-You define the output using a convention string and these tokens:
+`[ ... ]` marks an optional group. If any token inside it renders empty, the whole group —
+including its surrounding punctuation — is dropped, so a pattern like `{type}[ {cargo}]
+{towns}[ #{n}]` never leaves a dangling separator or a stray `#`. Groups cannot nest.
 
-- `{transportType}` — text for the transport type (customizable per-type)
-- `{cargoTypes}` — comma/separator-separated cargo names (full or short)
-- `{townNames}` — first and last town (full or short)
-- `{lineType}` — local/intercity/regional suffix
-- `{lineNumber}` — numeric identifier (line id)
+An unknown token (a typo) is left exactly as typed, so it is visible in the preview instead of
+silently disappearing. After rendering, runs of spaces collapse to one and the result is trimmed.
 
-Example: `{transportType} - {cargoTypes} - {townNames} {lineType}`
+### Numbering (`{n}`)
 
-## Defaults & tokens (exact runtime defaults)
+`{n}` disambiguates lines whose rendered name, with `{n}` removed, would otherwise be identical.
+Three settings control it, all on the Advanced tab under Numbering:
 
-The mod ships with sensible defaults which are used when the player has not changed settings. These are the values the code uses (from `res/scripts/abajuradam/state.lua`):
+- **Numbering scope**: `sameName` numbers lines sharing a rendered name together (default),
+  `kind` numbers by line kind, `global` numbers across every line.
+- **First number**: `blank` leaves the first line in a group unnumbered and the next gets `2`
+  (default); `one` always shows a number, starting at `1`.
+- **Zero-pad width**: pads `{n}` with leading zeros, e.g. width 2 turns `3` into `03`. `0`
+  means no padding (default).
 
-- Active convention: `{transportType} {cargoTypes}-{townNames}-{lineType}-{lineNumber}`
-- Disable (tag) prefix: `Cst` — any line name starting with this prefix will be ignored by ALN
-- Enabled by default: true
-- Auto Update: enabled = true, interval = 1 (minute)
+A line keeps the same number across re-renames as long as its base name (the name with `{n}`
+removed) does not change.
 
-Transport type defaults:
+### Shipped default patterns per kind
 
-- roadPassenger = `Bus`
-- roadCargo = `RC`
-- tramPassenger = `Tram`
-- trainPassenger = `TP`
-- trainCargo = `TC`
-- waterPassenger = `WP`
-- waterCargo = `WC`
-- airPassenger = `AP`
-- airCargo = `AC`
-- unknown = `UNK`
+- Default (every kind without its own pattern): `{type} {towns}[ {n}]`
+- Cargo kinds (truck, cargo train, cargo ship, cargo aircraft):
+  `{cargo}: {firstIndustry} → {lastIndustry}[ {n}]`
 
-Line type defaults:
+### Presets
 
-- localLineAddon = `LO`
-- intercityLineAddon = `IC`
-- regionalLineAddon = `RE`
+The Patterns tab has a preset chooser. Pick a preset from the dropdown, then click "Apply
+preset" twice — the first click arms it, the second confirms — since applying a preset
+overwrites the default pattern and every kind's own pattern.
 
-Cargo / town defaults:
+| Preset | Default pattern | Cargo-kind pattern (truck, cargo train/ship/aircraft) |
+|---|---|---|
+| **Simple** | `{type} {towns}[ {n}]` | `{cargo}: {firstIndustry} → {lastIndustry}[ {n}]` |
+| **Upstream** | `{type} {cargo}-{towns:3}-{scope}-{n}` for every kind, cargo kinds included | (same as default) |
+| **Detailed** | `{type} {firstStop} – {lastStop}[ via {via}][ {n}]` | `{cargo}: {firstIndustry} → {lastIndustry}[ via {via}][ {n}]` |
 
-- Cargo separator: `,`
-- Cargo show type (default): Full name (code value `0`)
-- Town show type (default): Short (3-letter) (code value `1`)
-- Town separator: `-`
+Simple is what the mod ships with. Upstream reproduces the original Auto Line Namer's layout.
+Detailed spells out the route by its first and last stop, with any towns in between; for cargo
+kinds it instead names them by cargo and industry (with via towns added), matching how Simple
+already treats cargo kinds differently from passenger kinds.
 
-Tokens available in convention strings:
-
-- `{transportType}`, `{cargoTypes}`, `{townNames}`, `{lineType}`, `{lineNumber}`
-
-Use these tokens in `Active Convention` to construct your preferred naming format.
-
-## Behavior & edge-cases
-
-- Auto-renaming triggers:
-  - When you close the line editor or toggle the station add button (avoids excessive rename calls).
-  - Periodically if Auto Update is enabled (useful to detect cargo types after vehicles load).
-- If a line already has a non-updatable custom name (or a prefix you defined), ALN will skip renaming it.
-
-### Rename triggers & persistence
-
-- Automatic rename occurs in two places in the mod code:
-  - When the line editor's "Add station" toggle is switched (the game-script listens for `lineEditor.addStation` toggle and triggers a rename when the toggle is turned off — this avoids rapid repeated renames).
-  - Periodic auto-update in the game-script's `data().update` loop when Auto Update is enabled (interval in minutes).
-- Manual force-rename: set the line name to `r` or `reload` and toggle the Add Station button (off → on). This is useful to trigger an immediate rename without waiting for the interval.
-- Settings are persisted by the game script (`save` / `load`), and `load()` restores known subkeys including `autoUpdate.enabled` and `autoUpdate.interval`.
-- The Reset Settings button in the GUI resets the stored settings to the defaults and updates the GUI immediately.
-
-## Preview
-
-- The settings window shows a live preview under the Active Convention field. It reflects changes to:
-  - The convention string
-  - Transport type labels
-  - Cargo show-type (Full/Short)
-  - Town name show-type (Full/Short)
-  - Separators
-
-If you want more realistic preview samples we can add a "Sample lines" selector that uses actual lines from the map.
-
-## Examples
-
-Here are three concrete example conventions and their expected outputs using the mod defaults (transport type labels, cargo/town show types and separators are noted):
-
-1. Default convention (defaults from `state.lua`)
-
-- Active convention: `{transportType} {cargoTypes}-{townNames}-{lineType}-{lineNumber}`
-- Defaults: transport type for road passenger = `Bus`, cargo show = Full, town show = Short (3-letter), town separator = `-`, line type for 2 towns = `IC`.
-- Example map: Road passenger line between "Springfield" and "Shelbyville" carrying passengers.
-- Output: `Bus Passengers-Spr-She-IC-1`
-
-2. Human-readable convention for cargo trains
-
-- Active convention: `{transportType} - {cargoTypes} - {townNames} {lineType}`
-- Settings: transport type for train cargo = `TC`, cargo show = Short (3-letter), cargo separator = `, `, town show = Short.
-- Example map: Train cargo line between "Norwich" and "Cambridge" carrying Logs and Gravel.
-- Output: `TC - Log,Gra - Nor-Cam IC`
-
-3. Local passenger shuttle (single-town shorter form)
-
-- Active convention: `{transportType}: {townNames} ({lineNumber}) {lineType}`
-- Settings: transport type for water passenger = `WP`, town show = Full, line type local = `LO`.
-- Example map: Water passenger line inside "Portville".
-- Output: `WP: Portville (1) LO`
-
-You can copy any of these convention strings into the Active Convention field and adjust transport/cargo/town settings to match your naming preferences.
-
-## Troubleshooting
-
-- Preview doesn't change: make sure the settings window is open and you modified a field that affects the preview. If the preview still doesn't update, redeploy the mod and restart the game.
-- Lines not renamed: check the Disable Prefix and make sure the line doesn't contain it. Also confirm the mod is enabled.
-- Default disable-prefix: `Cst` — lines starting with this prefix are ignored by ALN unless you change the prefix in settings.
-- Cargo types incorrect: cargo detection may need vehicles to be assigned and cargo to be loaded; enabling Auto Update helps.
-
-## Test locally (deploy)
-
-Use the supplied deploy helper to copy the repository into your local Steam userdata mods folder. The script will remove any existing folder with the same mod name and copy the current repository (useful for testing changes quickly):
+## Install
 
 ```bash
-./scripts/deploy_mod.sh
-# or supply a custom mods base path:
-./scripts/deploy_mod.sh "/path/to/Steam/userdata/XXXX/1066780/local/mods"
+./install.sh
 ```
 
-After deploying, start Transport Fever 2 and enable the mod in the game's mod list (if required). Open a save, click the `[ALN]` button in the game info bar and test the settings / preview.
+This copies the mod into the game's local mods folder as `auto_line_namer_plus_1`
+(`TPF2_LOCAL_MODS` overrides the destination root, for testing).
 
-## Developer notes
+Then:
 
-- Important files:
+1. **Restart Transport Fever 2.** A new local mod only appears in the mod list after a restart.
+2. Enable "Auto Line Namer Plus" in the mod list.
+3. If you are subscribed to the Workshop "Auto Line Namer", disable it. Two mods must not
+   rename the same lines.
 
-  - `res/scripts/abajuradam/auto_line_namer_helper.lua` — name generation logic
-  - `res/scripts/abajuradam/state.lua` — persistent settings getters/setters
-  - `res/scripts/abajuradam/auto_line_namer_gui.lua` — GUI window and event passthrough
-  - `res/config/game_script/auto_line_namer.lua` — game-script lifecycle and event handler
-  - `scripts/deploy_mod.sh` — local copy/deploy helper
+## First-launch checklist
 
-- Style and safety:
-  - Guard `api.engine.getComponent` results before using fields.
-  - Use `State` getters/setters for all configuration access.
-  - Escape user-provided strings when used in Lua patterns.
+On the Advanced tab, click "Run API check". Then read
+`~/.local/share/Steam/userdata/204184616/1066780/local/crash_dump/stdout.txt` for the lines it
+writes, all starting `aln_plus: api check:`.
 
-Additional developer pointers:
+- **(a)** If a cargo stop's industry shows `nil`, the industry lookup found nothing for it. This
+  is expected on some maps or stop placements; the industry tokens fall back to the stop name
+  (or town name, or empty, per "When no industry is found") and everything else keeps working.
+- **(b)** If the report's translated word is not "Line" (your game's language translates the
+  default line name differently), add that word to "Extra default-name words" on the General
+  tab so lines with that default name are still picked up for renaming.
+- **(c)** If the mod list shows no author for the mod, change `BASED_ON` to `CO_CREATOR` for
+  `erkanercan` in `mod.lua` and reinstall.
+- **(d)** If the numeric options on the Advanced tab show text fields instead of sliders, the
+  slider constructor guess in `gui/schema_form.lua` was wrong for your game version. The text
+  fields still work exactly the same; `stdout.txt` will have one `aln_plus:` line saying the
+  slider widget was unavailable and it fell back to a text field.
 
-- Localization strings live in `strings.lua`. Add new keys and translations there; the GUI uses `_('key')` to resolve them.
-- When adding new settings, wire them through the GUI helper (sendScriptEvent) and handle them in `GUIHelper.handleGuiEvents` and `game_script.load`/`save` for persistence.
-- The naming logic lives in `res/scripts/abajuradam/auto_line_namer_helper.lua`. If you change token names or add new tokens, update both the helper and the README examples.
+## In-game checklist
 
-## Contributing
+1. A newly built line with a default name gets a name from the mod.
+2. Editing a line's stops re-names it, after the settle delay.
+3. A line you rename by hand keeps that name and shows as locked on the Lines tab.
+4. Giving a kind its own pattern on the Patterns tab changes only lines of that kind.
+5. "Preview all" fills in proposed names without changing anything; "Apply checked" renames the
+   ticked rows.
+6. A cargo line's rendered name shows the industries at its ends (or the configured fallback).
+7. Previewing on the largest save you have causes no hitch — the Lines tab reads facts in small
+   chunks over several frames.
+8. Every "i" button shows its tooltip on hover and fills the help panel at the bottom of the
+   window on click, with no text cut off.
 
-- Open a GitHub issue for bugs or feature requests. PRs are welcome — keep changes small and include a short test plan.
+## Tests
 
-## License
+```bash
+lua5.4 test/run.lua
+```
 
-- This mod is distributed under the MIT license. See `LICENSE` for details.
+Runs the whole suite against a fake game API (`test/fake_api.lua`); nothing here touches a real
+Transport Fever 2 install. The suite also passes under `lua5.1` and `luajit` — the lint test
+(`test/test_lint.lua`) checks every file for Lua-5.1-only syntax (no `goto`, no `//`, no
+`table.unpack` without a fallback, no `utf8.`, no `string.pack`, no `<const>`/`<close>`).
 
-- This mod is distributed under the MIT license. See `LICENSE` for details.
+## Design
+
+- Design: `docs/superpowers/specs/2026-09-18-auto-line-namer-plus-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-09-18-auto-line-namer-plus/`
+
+## Credit and licence
+
+A fork of [Auto Line Namer](https://github.com/erkanercan/TPF2-AutoLineNamer) by erkanercan,
+rebuilt. MIT licence — see `LICENSE`:
+
+```
+Copyright (c) 2025 Erkan Ercan
+Copyright (c) 2026 AnujCtrl
+```
+
+## Known limitations
+
+- The `u`/`l` case modifiers are ASCII only; they do not upper- or lower-case accented or
+  non-Latin characters.
+- Help text is written with explicit line breaks at about 70 characters and does not re-wrap to
+  the window's actual width.
+- Settings and per-line locks are stored per save, not globally. To change what a **new** save
+  starts with, edit `res/scripts/anujctrl/alnp/user_defaults.lua` in the repo and reinstall —
+  `install.sh` overwrites the installed copy, so editing the installed file directly is lost on
+  the next install.
+- The mod cannot be run outside Transport Fever 2, so anything that touches the real game API
+  (the top-bar button, the window, in-game renames) is verified with the checklists above
+  rather than by an automated test.
