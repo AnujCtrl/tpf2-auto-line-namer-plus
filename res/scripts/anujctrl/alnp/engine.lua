@@ -1,0 +1,213 @@
+-- Engine-thread loop: looks at a few lines per tick, and renames a line only when it changed,
+-- has settled, and tracker.decide says the mod may touch it. The only module that sends commands.
+local log = require "anujctrl/alnp/log"
+local settings = require "anujctrl/alnp/settings"
+local classify = require "anujctrl/alnp/classify"
+local tracker = require "anujctrl/alnp/tracker"
+local propose = require "anujctrl/alnp/propose"
+local facts = require "anujctrl/alnp/facts"
+
+local engine = {}
+
+local state          -- { settings = tbl, records = { [lineId] = record }, version = n }  (saved)
+local runtime = {}   -- [lineId] = { signature = s, changedAt = seconds or nil }          (not saved)
+local queue, cursor = {}, 0
+local defaultWords   -- cache, cleared whenever a setting changes
+
+local function userDefaults()
+    local ok, overrides = pcall(require, "anujctrl/alnp/user_defaults")
+    if ok and type(overrides) == "table" then return overrides end
+    return nil
+end
+
+local function touch() state.version = (state.version or 0) + 1 end
+
+-- saved may be nil (new game) or whatever save() returned, after a trip through the save file.
+function engine.load(saved)
+    saved = type(saved) == "table" and saved or {}
+    state = { settings = settings.merge(userDefaults(), saved.settings), records = {}, version = saved.version or 0 }
+    for lineId, record in pairs(type(saved.records) == "table" and saved.records or {}) do
+        local id = tonumber(lineId) -- keys may come back from the save file as strings
+        if id and type(record) == "table" then
+            state.records[id] = {
+                lastAssigned = type(record.lastAssigned) == "string" and record.lastAssigned or nil,
+                locked = (record.locked == "player" or record.locked == "edited") and record.locked or nil,
+                number = tonumber(record.number),
+                numberKey = type(record.numberKey) == "string" and record.numberKey or nil,
+            }
+        end
+    end
+    runtime, queue, cursor, defaultWords = {}, {}, 0, nil
+    log.setLevel(state.settings.log.level)
+    facts.clearCache()
+end
+
+function engine.save()
+    if not state then engine.load(nil) end
+    return state
+end
+
+local function words()
+    defaultWords = defaultWords or tracker.defaultWords(state.settings, _("Line"))
+    return defaultWords
+end
+
+local function recordFor(lineId)
+    state.records[lineId] = state.records[lineId] or tracker.newRecord()
+    return state.records[lineId]
+end
+
+local function forget(lineId)
+    if state.records[lineId] then touch() end
+    state.records[lineId], runtime[lineId] = nil, nil
+end
+
+-- Every line gets looked at again after the settle delay (a pattern or label changed).
+local function rescan(now)
+    for __, entry in pairs(runtime) do entry.changedAt = now end
+end
+
+-- Give the line the name propose.name says it should have. The record is updated even when the
+-- name is already right, because from now on the mod owns that name.
+local function rename(lineId, lineFacts)
+    local record = recordFor(lineId)
+    local name, n, key = propose.name(lineFacts, record, state.settings, propose.takenByKey(state.records, lineId))
+    if not name then return end
+    record.lastAssigned, record.number, record.numberKey = name, n, key
+    if record.locked == "edited" then record.locked = nil end
+    touch()
+    if name ~= lineFacts.name then
+        api.cmd.sendCommand(api.cmd.make.setName(lineId, name))
+        log.info(('renamed line %d: "%s" -> "%s"'):format(lineId, lineFacts.name, name))
+    end
+end
+
+local function consider(lineId)
+    local lineFacts = facts.forLine(lineId, state.settings)
+    if not lineFacts then return forget(lineId) end
+    local kind = classify.kind(lineFacts)
+    local kindSettings = state.settings.kinds[kind]
+    local action = tracker.decide(state.records[lineId], lineFacts.name,
+        kindSettings and kindSettings.autoRename, state.settings, words())
+    if action == "rename" then
+        rename(lineId, lineFacts)
+    elseif action == "autoLock" then
+        local record = recordFor(lineId)
+        if record.locked ~= "edited" then
+            record.locked = "edited"
+            touch()
+        end
+    end
+end
+
+local function visit(lineId, now)
+    local signature = facts.signature(lineId)
+    if not signature then return forget(lineId) end
+    local entry = runtime[lineId]
+    if not entry then
+        entry = { signature = signature, changedAt = now }
+        runtime[lineId] = entry
+    elseif entry.signature ~= signature then
+        entry.signature, entry.changedAt = signature, now
+    end
+    if entry.changedAt and now - entry.changedAt >= state.settings.scan.settleSeconds then
+        entry.changedAt = nil
+        consider(lineId)
+    end
+end
+
+local function refillQueue()
+    queue, cursor = facts.playerLines(), 0
+    local alive = {}
+    for __, lineId in ipairs(queue) do alive[lineId] = true end
+    for lineId in pairs(state.records) do if not alive[lineId] then forget(lineId) end end
+    for lineId in pairs(runtime) do if not alive[lineId] then runtime[lineId] = nil end end
+end
+
+function engine.tick(now)
+    if not state then engine.load(nil) end
+    if not state.settings.enabled then return end
+    for __ = 1, state.settings.scan.linesPerTick do
+        if cursor >= #queue then
+            refillQueue()
+            if #queue == 0 then return end
+        end
+        cursor = cursor + 1
+        visit(queue[cursor], now)
+    end
+end
+
+local handlers = {}
+
+function handlers.set(param, now)
+    local ok, err = settings.set(state.settings, param.path, param.value)
+    if not ok then return log.error("setting rejected: " .. tostring(err)) end
+    if param.path == "log.level" then log.setLevel(param.value) end
+    if param.path:find("^industry%.") then facts.clearCache() end
+    defaultWords = nil
+    rescan(now)
+end
+
+function handlers.lock(param, now)
+    local lineId = tonumber(param.line)
+    if not lineId then return end
+    recordFor(lineId).locked = param.locked and "player" or nil
+    if runtime[lineId] then runtime[lineId].changedAt = now end
+end
+
+-- The player ticked these rows in the Lines tab and pressed "Apply checked".
+function handlers.apply(param)
+    for __, item in ipairs(param.renames or {}) do
+        local lineId, name = tonumber(item.line), item.name
+        if lineId and type(name) == "string" and name:match("%S") and facts.signature(lineId) then
+            local record = recordFor(lineId)
+            record.lastAssigned, record.number, record.numberKey = name, tonumber(item.n), item.key
+            if record.locked == "edited" then record.locked = nil end
+            if name ~= facts.name(lineId) then
+                api.cmd.sendCommand(api.cmd.make.setName(lineId, name))
+                log.info(('renamed line %d to "%s" (applied from the Lines tab)'):format(lineId, name))
+            end
+        end
+    end
+end
+
+-- "rename now" on one row: the player asked, so the tracker is not consulted.
+function handlers.renameNow(param)
+    local lineId = tonumber(param.line)
+    local lineFacts = lineId and facts.forLine(lineId, state.settings)
+    if lineFacts then rename(lineId, lineFacts) end
+end
+
+function handlers.preset(param, now)
+    if settings.applyPreset(state.settings, param.key) then rescan(now) end
+end
+
+function handlers.resetSection(param, now)
+    settings.resetSection(state.settings, param.section)
+    defaultWords = nil
+    facts.clearCache()
+    log.setLevel(state.settings.log.level)
+    rescan(now)
+end
+
+function handlers.resetAll(__, now)
+    state.settings = settings.merge(userDefaults(), nil)
+    defaultWords = nil
+    facts.clearCache()
+    log.setLevel(state.settings.log.level)
+    rescan(now)
+end
+
+function handlers.apiCheck()
+    for __, line in ipairs(facts.apiCheck(state.settings)) do log.info("api check: " .. line) end
+end
+
+function engine.handleEvent(name, param)
+    if not state then engine.load(nil) end
+    local handler = handlers[name]
+    if not handler then return log.error("unknown event: " .. tostring(name)) end
+    handler(type(param) == "table" and param or {}, os.time())
+    touch()
+end
+
+return engine
