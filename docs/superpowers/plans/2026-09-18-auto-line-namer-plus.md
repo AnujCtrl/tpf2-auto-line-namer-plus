@@ -11,8 +11,10 @@ tables, tested on the host with `lua5.4`. The engine thread owns settings and pe
 is the only place a rename is sent; the GUI thread only sends script events. Settings, their form
 and their help text all derive from one schema table.
 
-**Tech Stack:** Lua (game runs LuaJIT-era 5.1 semantics; host tests run `lua5.4`), Transport
-Fever 2 scripting API, bash + rsync for install. No third-party libraries.
+**Tech Stack:** Lua (the game binary embeds Lua 5.2.2; code is restricted to the subset valid
+in both 5.1 and 5.2, and host tests run under `lua5.4`, `lua5.1` and `luajit` — 5.2 itself is
+not installed on this machine), Transport Fever 2 scripting API, bash + rsync for install. No
+third-party libraries.
 
 **Spec:** `docs/superpowers/specs/2026-09-18-auto-line-namer-plus-design.md` — read it with your
 task file. Where the two disagree, the spec wins; report the disagreement.
@@ -29,8 +31,10 @@ implementer reads this overview, the spec, and their own task file only.
   the string `"alnp"`.
 - Only `facts.lua` may call `api.engine`, `api.res` or `game.interface`. Only `engine.lua` may call
   `api.cmd`. Only files under `gui/` may call `api.gui`. A lint test enforces all three.
-- Code must run on Lua 5.1 semantics: no `goto`, no integer division `//`, no bitwise operators,
-  no `table.unpack` (use `unpack or table.unpack`), no `utf8` library, no `string.pack`.
+- Code must be restricted to syntax valid under Lua 5.1 (the installed game binary embeds Lua
+  5.2.2, which this subset also runs on): no `goto`, no integer division `//`, no bitwise
+  operators, no `table.unpack` (use `unpack or table.unpack`), no `utf8` library, no
+  `string.pack`.
 - `_` is the game's translation function. Never use `_` as a variable, loop variable or parameter;
   spell throwaways `__`. A lint test enforces this.
 - All UI text is `_("English text")`. English needs no `strings.lua` entry. No task except Task 13

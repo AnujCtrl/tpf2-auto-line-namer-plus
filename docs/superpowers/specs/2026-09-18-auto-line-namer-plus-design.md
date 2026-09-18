@@ -79,7 +79,7 @@ Only `facts.lua` reads the game. Everything downstream works on plain tables.
 | `gui/patterns_tab.lua` | default and per-kind patterns with live preview | GUI only |
 | `gui/lines_tab.lua` | line table, locks, preview and apply | GUI + `facts` reads |
 | `log.lua` | prefixed, de-duplicated logging | `print` |
-| game script | wires `update`, `handleEvent`, `guiInit`, `guiUpdate`, `guiHandleEvent`, `save`, `load` | wiring |
+| game script | wires `update`, `handleEvent`, `guiInit`, `guiUpdate`, `save`, `load` | wiring |
 
 Threads. The engine thread owns the settings and the per-line records, and is the only place a
 rename is sent. The GUI thread receives both through the game's `save()` → `load()` channel and
@@ -136,7 +136,12 @@ been stable for `scan.settleSeconds`, the engine reads full facts and calls `tra
 | name equals `record.lastAssigned`, `eligible.modAssigned` off | `skip` |
 | anything else: the player wrote it | `autoLock` if `lock.autoLockEdited`, else `skip` |
 
-`autoLock` sets `record.locked = "edited"`. The Lines tab shows it and can clear it.
+`autoLock` sets `record.locked = "edited"`. The Lines tab shows it, but its lock box cannot be
+unticked — an edited name is protected because it is hand-written, not because of a lock the
+player can lift. The line is handed back to the mod by "Rename now" on that row, by ticking the
+row and pressing "Apply checked", or by renaming the line to a `reload.names` word (e.g. `r`)
+in the game. A `player` lock (ticked by the player) is cleared by unticking it; a `prefix` lock
+is cleared by removing the prefix from the name.
 
 Default-name patterns: `^Line %d+$`, the same with the game's translated word for "Line", and
 every entry of `defaults.extraPrefixes` (a comma-separated setting, e.g. `Linie,Ligne`).
@@ -250,7 +255,9 @@ Settings (defaults in brackets):
 | performance | `scan.linesPerTick` [5], `scan.settleSeconds` [5], `preview.linesPerFrame` [25] | work budget |
 | logging | `log.level` [info] | `error`, `info`, `debug` |
 
-Each section has a "Reset section" button. Reset of everything is on the General tab.
+Each section on the General and Advanced tabs has a "Reset section" button; the Patterns
+section has none by design (choosing a preset is its reset). Reset of everything is on the
+General tab.
 
 ## 10. Window
 
@@ -301,7 +308,8 @@ Implementation:
   and `strings.lua` holds translations only, keyed by the English text. English therefore needs
   no entry, no two modules share a strings file while being written, and other languages fall
   back to English until translated. Upstream's German, Russian and Turkish entries are re-keyed
-  for the strings that survive (mod name and description); its symbolic keys are removed.
+  only for the mod name, the one string that survives; the description is not translated. Its
+  symbolic keys are removed.
 - Help text is written with explicit line breaks at about 70 characters, so it does not depend
   on the game wrapping text.
 - Help text for a settings row is assembled from the schema: the authored explanation plus a
@@ -347,9 +355,9 @@ button shows its tooltip on hover and fills the help panel on click, with no tex
 1. **Industry lookup.** Expected: `game.interface.getEntities({pos, radius}, {type="SIM_BUILDING"})`.
    Not confirmed by the bundled API docs. The lookup is wrapped so a failure only means the
    industry tokens use `industry.fallback`. A "Run API check" button on the Advanced tab logs
-   what the lookup returns for every cargo stop, the translated word for "Line", and the mod's
-   author roles, so all three assumptions in this section are checked on first launch without a
-   separate probe build.
+   what the lookup returns for every cargo stop and the translated word for "Line", so both
+   assumptions are checked on first launch without a separate probe build. The author-role
+   assumption below is checked by eye in the mod list instead, not logged by this button.
 2. **Translated default name.** The API check logs the game's translation of "Line".
    `defaults.extraPrefixes` covers any language by configuration either way.
 3. **Author role.** `BASED_ON` is the accurate role for the original author. If the game rejects
@@ -360,5 +368,5 @@ button shows its tooltip on hover and fills the help panel on click, with no tex
 
 `install.sh` rsyncs the mod into
 `~/.local/share/Steam/userdata/204184616/1066780/local/mods/auto_line_namer_plus_1`, excluding
-`.git`, `docs`, `test`, `tf2-api`, `scripts`, `.github`, `.vscode`, `README.md` and itself.
-`TPF2_LOCAL_MODS` overrides the destination root.
+`.git`, `docs`, `test`, `tf2-api`, `.vscode`, `.luacheckrc`, `.gitignore`, `README.md`,
+`.superpowers` and itself (`install.sh`). `TPF2_LOCAL_MODS` overrides the destination root.

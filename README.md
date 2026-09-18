@@ -1,10 +1,11 @@
 # Auto Line Namer Plus
 
 Transport Fever 2 mod that names every line for you, from its stops, towns, industries and
-cargo. It never overwrites a name you wrote yourself, costs a fixed amount of work per game
-tick no matter how large the save is, and exposes every tunable as a setting with an in-window
-"i" button explaining it. A fork of erkanercan's Auto Line Namer, rebuilt from the ground up so
-that everything except the code that reads the game is plain Lua, tested on the host.
+cargo. It never overwrites a name you wrote yourself, looks at only a bounded number of lines
+per game tick however large the save is, and exposes every tunable as a setting with an
+in-window "i" button explaining it. A fork of erkanercan's Auto Line Namer, rebuilt from the
+ground up so that everything except the code that reads the game is plain Lua, tested on the
+host.
 
 ## How names are chosen, and when a line is left alone
 
@@ -12,8 +13,9 @@ Every game tick the engine checks `scan.linesPerTick` lines, in round-robin orde
 line it computes a cheap signature (stop station-group ids, vehicle count, current name). If
 the signature has not changed since last time, nothing else happens. If it changed, a settle
 timer starts; only once the signature has been stable for `scan.settleSeconds` real seconds does
-the mod read the line's full facts and decide what to do. The delay is measured with the
-system clock, so it behaves the same whether the game is paused or running at high speed.
+the mod read the line's full facts and decide what to do. The delay is measured in real seconds
+(the system clock, `os.time()`), not game ticks. Whether `update()` — and so this whole
+check — keeps running while the game is paused is not verified; see the first-launch checklist.
 
 Once a line settles, the mod checks these conditions in order, and stops at the first match:
 
@@ -33,6 +35,10 @@ A "game default name" is `Line 12` (or its translated equivalent, e.g. `Linie 12
 see the first-launch checklist below), plus any comma-separated word you add under "Extra
 default-name words".
 
+This whole list is what the engine's automatic scan checks. "Rename now" on the Lines tab
+skips it entirely and renames that one line regardless of any lock — it is a manual override,
+not a ninth rule.
+
 Three rules apply no matter what the settings say:
 
 - The mod never sends a rename when the new name is identical to the current one.
@@ -40,13 +46,14 @@ Three rules apply no matter what the settings say:
 - A line with fewer distinct stops than "Minimum stops" (default 2) is left alone.
 
 A line id that no longer exists is dropped from the mod's records. Per-line locks and the name
-the mod last assigned are saved with the line; scan signatures and settle timers are not saved
-and start fresh each time the game loads.
+the mod last assigned are saved in the save game (the mod's own state, via the game's
+`save()`/`load()`, not a property stored on the line itself); scan signatures and settle timers
+are not saved and start fresh each time the game loads.
 
 ## Patterns and tokens
 
 A pattern is a template made of tokens, e.g. `{type} {towns}[ {n}]`, rendered against a line's
-own facts. Every line kind uses the default pattern (Advanced tab) unless the Patterns tab gives
+own facts. Every line kind uses the default pattern (Patterns tab) unless that same tab gives
 it a custom pattern of its own. Each kind also has its own auto-rename switch (default on), so
 you can turn off, say, trains and rename them by hand while everything else keeps auto-renaming.
 
@@ -141,25 +148,31 @@ Then:
 2. Enable "Auto Line Namer Plus" in the mod list.
 3. If you are subscribed to the Workshop "Auto Line Namer", disable it. Two mods must not
    rename the same lines.
+4. In a game, click the **"[ALN+]"** button in the top game-info bar to open the settings
+   window.
 
 ## First-launch checklist
 
 On the Advanced tab, click "Run API check". Then read
-`~/.local/share/Steam/userdata/204184616/1066780/local/crash_dump/stdout.txt` for the lines it
-writes, all starting `aln_plus: api check:`.
+`~/.local/share/Steam/userdata/<your Steam id>/1066780/local/crash_dump/stdout.txt` for the
+lines it writes, all starting `aln_plus: api check:`.
 
 - **(a)** If a cargo stop's industry shows `nil`, the industry lookup found nothing for it. This
   is expected on some maps or stop placements; the industry tokens fall back to the stop name
   (or town name, or empty, per "When no industry is found") and everything else keeps working.
-- **(b)** If the report's translated word is not "Line" (your game's language translates the
-  default line name differently), add that word to "Extra default-name words" on the General
-  tab so lines with that default name are still picked up for renaming.
+- **(b)** Whatever the report's translated word for "Line" is, it is already recognised
+  automatically. Only act if new lines in your language are **not** named "`<that word>
+  <number>`": look at a fresh line's default name and add its first word to "Extra default-name
+  words" on the General tab.
 - **(c)** If the mod list shows no author for the mod, change `BASED_ON` to `CO_CREATOR` for
   `erkanercan` in `mod.lua` and reinstall.
 - **(d)** If the numeric options on the Advanced tab show text fields instead of sliders, the
   slider constructor guess in `gui/schema_form.lua` was wrong for your game version. The text
   fields still work exactly the same; `stdout.txt` will have one `aln_plus:` line saying the
   slider widget was unavailable and it fell back to a text field.
+- **(e)** Is `update()` called while the game is paused? Pause the game, wait past the settle
+  delay, then check whether a changed line still gets renamed. This is unverified; it decides
+  whether the settle delay actually behaves the same paused as running.
 
 ## In-game checklist
 
@@ -174,6 +187,17 @@ writes, all starting `aln_plus: api check:`.
    chunks over several frames.
 8. Every "i" button shows its tooltip on hover and fills the help panel at the bottom of the
    window on click, with no text cut off.
+9. Preview a line, rename it by hand in-game before applying, then tick its row and click
+   "Apply checked": the row is skipped and shows "(name changed: preview again)" — your
+   hand-written name survives.
+10. The window resizes and scrolls correctly on all four tabs (General, Advanced, Patterns,
+    Lines).
+11. A kind that should inherit the default pattern stays unticked under "Custom pattern" after
+    closing and reopening the window once.
+12. The arrow (`→`) and en dash (`–`) used in the shipped patterns render correctly in the
+    game's font, not as missing-glyph boxes.
+13. Check what `{cargo}` renders for a truck set to carry every cargo type.
+14. Check a brand-new line with no vehicles yet.
 
 ## Tests
 
@@ -182,9 +206,12 @@ lua5.4 test/run.lua
 ```
 
 Runs the whole suite against a fake game API (`test/fake_api.lua`); nothing here touches a real
-Transport Fever 2 install. The suite also passes under `lua5.1` and `luajit` — the lint test
-(`test/test_lint.lua`) checks every file for Lua-5.1-only syntax (no `goto`, no `//`, no
-`table.unpack` without a fallback, no `utf8.`, no `string.pack`, no `<const>`/`<close>`).
+Transport Fever 2 install. The installed game binary embeds Lua 5.2.2 (`strings
+TransportFever2` shows `$LuaVersion: Lua 5.2.2`), so the code is restricted to the subset of
+syntax valid in both Lua 5.1 and 5.2, and the suite also passes under `lua5.4`, `lua5.1` and
+`luajit` (5.2 itself is not installed on this machine) — the lint test (`test/test_lint.lua`)
+checks every file for syntax newer than Lua 5.1 (rejects `goto`, `//`, `table.unpack` without a
+fallback, `utf8.`, `string.pack`, `<const>`/`<close>`).
 
 ## Design
 
@@ -214,3 +241,7 @@ Copyright (c) 2026 AnujCtrl
 - The mod cannot be run outside Transport Fever 2, so anything that touches the real game API
   (the top-bar button, the window, in-game renames) is verified with the checklists above
   rather than by an automated test.
+- A line's name is only re-evaluated when its stops, vehicle count or current name change (see
+  `facts.signature`). A refit to a different cargo at the same vehicle count, or renaming a
+  station or town, does not update the line's name until something else changes it — naming the
+  line `r` forces a re-evaluation.

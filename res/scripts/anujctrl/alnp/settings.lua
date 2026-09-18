@@ -90,9 +90,10 @@ addRow({ path = "lock.prefix", type = "string", default = "", section = "general
         .. "alone. Example: prefix \"Cst\" protects \"Cst Feeder 1\"." })
 addRow({ path = "lock.autoLockEdited", type = "bool", default = true, section = "general",
     label = "Auto-lock hand-edited names",
-    help = "Locks a name that looks hand-typed so the mod leaves it\n"
-        .. "alone. Example: renaming a line to \"Airport Express\"\n"
-        .. "locks it automatically." })
+    help = "A hand-typed name is never renamed either way this is\n"
+        .. "set. On, it also shows as locked on the Lines tab.\n"
+        .. "Example: renaming a line to \"Airport Express\" shows it\n"
+        .. "as locked when this is on." })
 addRow({ path = "reload.names", type = "string", default = "r,reload", section = "general",
     label = "Reload trigger names",
     help = "Rename a line once by naming it one of these words.\n"
@@ -202,13 +203,18 @@ addRow({ path = "scan.linesPerTick", type = "int", default = 5, min = 1, max = 5
     label = "Lines checked per tick",
     help = "How many lines the mod examines on each game tick.\n"
         .. "Example: at 5, a save with 300 lines is fully checked\n"
-        .. "about every 12 seconds." })
+        .. "every 60 game ticks." })
 addRow({ path = "scan.settleSeconds", type = "int", default = 5, min = 0, max = 60, section = "performance",
     label = "Settle delay",
     help = "How long, in real seconds, a line's stops, vehicle count\n"
         .. "and current name must all stay the same before the mod\n"
-        .. "reads it and considers a rename; changing any of them\n"
-        .. "restarts the wait, e.g. adding a vehicle or renaming it." })
+        .. "acts on it. The real wait is longer: a change is only\n"
+        .. "noticed once the tick rotation reaches that line, and\n"
+        .. "whether it has settled is only checked on a later visit,\n"
+        .. "so expect this delay plus up to two rotations. Example:\n"
+        .. "at 5 lines per tick, a 300-line save rotates every 60\n"
+        .. "ticks, so a change may take close to two rotations on\n"
+        .. "top of the settle delay before it is picked up." })
 addRow({ path = "preview.linesPerFrame", type = "int", default = 25, min = 1, max = 200, section = "performance",
     label = "Lines previewed per frame",
     help = "How many lines the Lines tab reads per GUI frame while\n"

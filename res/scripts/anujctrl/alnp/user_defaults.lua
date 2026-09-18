@@ -1,7 +1,7 @@
--- Overrides for the built-in schema defaults (settings.lua), applied only to a brand-new save --
--- one that has never had this mod's settings saved into it before. Editing an existing save's
--- settings is done from the in-game window instead; this file never touches a save already in
--- progress.
+-- Overrides for the built-in schema defaults (settings.lua). Read in two cases: for a brand-new
+-- save -- one that has never had this mod's settings saved into it before -- and again whenever
+-- the player presses "Reset section" or "Reset everything" in the settings window, since both
+-- restore what a new save would start with (see engine.lua's resetSection/resetAll handlers).
 --
 -- Paths mirror the dotted settings paths used everywhere else (settings.get/settings.set), so a
 -- setting here is written the same way it would show up in a saved game, for example:

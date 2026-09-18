@@ -22,18 +22,19 @@ topics.list = {
             .. "short settle delay before deciding what to do, so a line\n"
             .. "that is mid-edit is left alone.\n"
             .. "\n"
-            .. "A line is skipped once it is locked. Locking happens when you\n"
-            .. "tick the lock box on the Lines tab, automatically when you\n"
-            .. "type your own name for it (if that option is on), or\n"
-            .. "whenever the name starts with the configured lock prefix.\n"
-            .. "Anything else -- a default game name, or a name the mod\n"
-            .. "assigned before -- gets renamed.\n"
+            .. "A line is skipped once it is locked: you ticked its lock\n"
+            .. "box, or its name starts with the configured lock prefix.\n"
+            .. "A name you typed yourself is also always left alone --\n"
+            .. "\"Auto-lock hand-edited names\" only changes whether it\n"
+            .. "shows as locked on the Lines tab, never whether it can be\n"
+            .. "renamed. Anything else -- a default game name, or a name\n"
+            .. "the mod assigned before -- gets renamed.\n"
             .. "\n"
             .. "Settings and per-line locks are saved with your game, so\n"
             .. "each save keeps its own configuration.\n"
             .. "res/scripts/anujctrl/alnp/user_defaults.lua sets the\n"
-            .. "starting values used for brand-new saves only; it never\n"
-            .. "changes a save already in progress.",
+            .. "starting values for a brand-new save, and is read again\n"
+            .. "whenever you press a Reset button on this window.",
     },
     {
         key = "tab.general",
@@ -92,8 +93,12 @@ topics.list = {
         text = "Simple applies the shipped defaults: a plain name for\n"
             .. "passenger lines, and cargo with its industries for freight\n"
             .. "lines. Upstream matches the original Auto Line Namer's\n"
-            .. "layout. Detailed spells out the route by its first and last\n"
-            .. "stop, with any stops between.\n"
+            .. "layout.\n"
+            .. "\n"
+            .. "Detailed spells out passenger lines by their first and\n"
+            .. "last stop, with any towns between listed by {via} (up to\n"
+            .. "\"Max via towns shown\"); cargo kinds keep the cargo and\n"
+            .. "industry pattern instead, with those via towns added.\n"
             .. "\n"
             .. "Choosing a preset overwrites the default pattern and every\n"
             .. "kind's pattern, replacing anything you have typed.",
@@ -143,12 +148,14 @@ topics.list = {
             .. "entirely if {n} would be blank, so you never get a\n"
             .. "dangling \"#\" or space. Groups cannot be nested.\n"
             .. "\n"
-            .. "Every token has an older, upstream name that still works:\n"
-            .. "{type} is also {transportType}, {scope} is also {lineType},\n"
-            .. "{cargo} is also {cargoTypes}, {towns} is also {townNames},\n"
-            .. "and {n} is also {lineNumber}. A token that is not\n"
-            .. "recognised is left exactly as typed, so a typo shows up in\n"
-            .. "the preview instead of disappearing silently.\n"
+            .. "Five of the twelve tokens below also have an older,\n"
+            .. "upstream name that still works: {type} is also\n"
+            .. "{transportType}, {scope} is also {lineType}, {cargo} is\n"
+            .. "also {cargoTypes}, {towns} is also {townNames}, and {n}\n"
+            .. "is also {lineNumber}. The rest have no alias. A token\n"
+            .. "that is not recognised is left exactly as typed, so a\n"
+            .. "typo shows up in the preview instead of disappearing\n"
+            .. "silently.\n"
             .. "\n"
             .. "Every available token is listed below, with an example.",
     },
@@ -176,9 +183,13 @@ topics.list = {
     {
         key = "lines.col.proposed",
         title = "Proposed name column",
-        text = "The name \"Preview all\" would give this line. Blank means\n"
-            .. "the line would be skipped -- usually because it has fewer\n"
-            .. "stops than the configured minimum.",
+        text = "The name \"Apply checked\" would give this line. Shows\n"
+            .. "\"(left alone)\" when there is none -- usually because it\n"
+            .. "has fewer stops than the configured minimum.\n"
+            .. "\n"
+            .. "Shows \"(name changed: preview again)\" if the line's own\n"
+            .. "name changed since this preview was computed; run\n"
+            .. "\"Preview all\" again before applying.",
     },
     {
         key = "lines.col.lock",
@@ -188,12 +199,15 @@ topics.list = {
             .. "player -- you ticked the lock box for this row yourself.\n"
             .. "Untick it to let the mod rename the line again.\n"
             .. "\n"
-            .. "edited -- you typed a name and the mod locked it for you.\n"
-            .. "Untick the same lock box to release it.\n"
+            .. "edited -- you typed this name, so it is protected because\n"
+            .. "it is hand-written; its lock box cannot be unticked. Hand\n"
+            .. "the line back with \"Rename now\" on this row, by ticking\n"
+            .. "the row and pressing \"Apply checked\", or by renaming the\n"
+            .. "line to \"r\" in the game.\n"
             .. "\n"
             .. "prefix -- the name starts with the lock prefix set on the\n"
-            .. "General tab. Rename the line, or change or clear that\n"
-            .. "setting, to clear it.",
+            .. "General tab. Remove that prefix from the name to clear\n"
+            .. "it (or change or clear the setting itself).",
     },
     {
         key = "lines.col.renameNow",
@@ -223,34 +237,37 @@ topics.list = {
     {
         key = "reset.section",
         title = "Reset section",
-        text = "Restores every option on this section back to its shipped\n"
-            .. "default. Per-line locks and the mod's own naming records\n"
-            .. "are kept -- this only resets settings, never anything\n"
-            .. "about your lines.",
+        text = "Restores every option on this section to what a brand-new\n"
+            .. "save would start with: the shipped default, overlaid with\n"
+            .. "anything set in user_defaults.lua. Per-line locks and the\n"
+            .. "mod's own naming records are kept -- this only resets\n"
+            .. "settings, never anything about your lines.",
     },
     {
         key = "reset.all",
         title = "Reset everything",
-        text = "Restores every option and every pattern back to its\n"
-            .. "shipped default, across every tab. Per-line locks and the\n"
-            .. "mod's own naming records are kept -- this only resets\n"
-            .. "settings, never anything about your lines.",
+        text = "Restores every option and every pattern, across every tab,\n"
+            .. "to what a brand-new save would start with: the shipped\n"
+            .. "defaults, overlaid with anything set in user_defaults.lua.\n"
+            .. "Per-line locks and the mod's own naming records are kept --\n"
+            .. "this only resets settings, never anything about your lines.",
     },
     {
         key = "advanced.apiCheck",
         title = "Run API check",
         text = "Writes a short report to your game's stdout.txt --\n"
-            .. "~/.local/share/Steam/userdata/204184616/1066780/local/\n"
-            .. "crash_dump/stdout.txt -- describing what the industry\n"
-            .. "lookup finds for each cargo stop, and the game's own\n"
-            .. "translation of the word \"Line\".\n"
+            .. "~/.local/share/Steam/userdata/<your Steam id>/1066780/\n"
+            .. "local/crash_dump/stdout.txt -- describing what the\n"
+            .. "industry lookup finds for each cargo stop, and the\n"
+            .. "game's own translation of the word \"Line\", which is\n"
+            .. "already recognised automatically, whatever it is.\n"
             .. "\n"
             .. "If a cargo stop shows no industry, the industry tokens\n"
             .. "will fall back per the industry setting below instead of\n"
-            .. "failing. If \"Line\" is translated to a word the mod does\n"
-            .. "not already recognise, add it to \"extra default-name\n"
-            .. "words\" on the General tab so lines named that way still\n"
-            .. "get picked up for renaming.",
+            .. "failing. If new lines in your language are NOT named\n"
+            .. "\"<that word> <number>\", look at a fresh line's default\n"
+            .. "name and add its first word to \"Extra default-name\n"
+            .. "words\" on the General tab.",
     },
 }
 
