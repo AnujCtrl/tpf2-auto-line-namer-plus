@@ -34,40 +34,94 @@ function t.can_read_at_least_the_files_already_written()
     assert(any, "no .lua files found under res/, mod.lua or strings.lua")
 end
 
--- Reduces a line to just its code: every quoted string span ("..." or '...', honouring backslash
--- escapes so `"say \"hi\" // x"` stays one span) is dropped entirely, then a trailing `-- ...`
--- line comment is dropped too. A syntax mention inside a string or a comment -- a URL, a help
--- example, the English word "goto" -- is therefore invisible to every pattern check below. A
--- per-line heuristic is enough for this codebase: no file opens a `[[ ... ]]` long string, so no
--- check here needs to track state across lines.
-local function codeOnly(line)
+-- Scans one line as code, given whether a level-0 `[[ ... ]]` long-bracket string is already open
+-- from an earlier line (false for a line taken on its own -- see codeOnly() below). Returns the
+-- line's code-only text and whether a long string is still open at the end of the line, so
+-- codeLines() can carry that into the next one.
+--
+-- Outside a long string: a quoted string span ("..." or '...', honouring backslash escapes so
+-- `"say \"hi\" // x"` stays one span) is dropped entirely, then a trailing `-- ...` line comment
+-- is dropped, and a `[[` that opens a long string switches into it -- handling one that opens and
+-- closes again on the very same line, and real code that follows the close, in the same pass.
+-- Inside a long string, everything up to and including its closing `]]` is dropped, so a syntax
+-- mention there -- a URL, a help example, the English word "goto" -- is invisible to every
+-- pattern check below (this is what mod.lua's `description = _([[ ... ]])` needs: F1 alone only
+-- stripped a QUOTED string on ONE line, and could not see this one open across several).
+--
+-- Level-0 brackets only: an `[=[ ... ]=]` long-bracket level is scanned as ordinary characters
+-- (not given long-string treatment -- but that is safe, since `[=[`/`]=]` cannot be mistaken for
+-- real code either), and a `--[[ ... ]]` block comment is not specially recognised. Neither
+-- appears anywhere in this codebase today.
+local function scanLine(line, insideLongString)
     local out = {}
     local i, n = 1, #line
     while i <= n do
-        if line:sub(i, i + 1) == "--" then
-            break
-        end
-        local c = line:sub(i, i)
-        if c == '"' or c == "'" then
-            local quote = c
-            i = i + 1
-            while i <= n do
-                local d = line:sub(i, i)
-                if d == "\\" then
-                    i = i + 2
-                elseif d == quote then
-                    i = i + 1
-                    break
-                else
-                    i = i + 1
-                end
+        if insideLongString then
+            if line:sub(i, i + 1) == "]]" then
+                insideLongString = false
+                i = i + 2
+            else
+                i = i + 1
             end
+        elseif line:sub(i, i + 1) == "--" then
+            break
+        elseif line:sub(i, i + 1) == "[[" then
+            insideLongString = true
+            i = i + 2
         else
-            out[#out + 1] = c
-            i = i + 1
+            local c = line:sub(i, i)
+            if c == '"' or c == "'" then
+                local quote = c
+                i = i + 1
+                while i <= n do
+                    local d = line:sub(i, i)
+                    if d == "\\" then
+                        i = i + 2
+                    elseif d == quote then
+                        i = i + 1
+                        break
+                    else
+                        i = i + 1
+                    end
+                end
+            else
+                out[#out + 1] = c
+                i = i + 1
+            end
         end
     end
-    return table.concat(out)
+    return table.concat(out), insideLongString
+end
+
+-- Reduces a single, isolated line to just its code (see scanLine()). A `[[` opened on this line
+-- without a matching `]]` is invisible to whatever comes after it -- callers that need to see a
+-- long string spanning several lines, i.e. everyone scanning a real file, use codeLines() below
+-- instead, never this directly.
+local function codeOnly(line)
+    return (scanLine(line, false))
+end
+
+-- Reduces a whole file's lines to their code-only text in one pass (see scanLine()), carrying a
+-- level-0 `[[ ... ]]` long string's open/closed state from one line to the next. Every syntax and
+-- layering rule below reads a file through this, not codeOnly() line by line, so a long string
+-- that opens on one line and closes on a later one -- exactly mod.lua's description -- cannot
+-- leak a banned-looking word into any of them.
+local function codeLines(lines)
+    local out = {}
+    local insideLongString = false
+    for n, line in ipairs(lines) do
+        out[n], insideLongString = scanLine(line, insideLongString)
+    end
+    return out
+end
+
+-- Reads `path` and returns its lines paired with their per-file code-only text (see codeLines()
+-- above), so every syntax and layering rule shares one long-string-aware pass instead of scanning
+-- each line in isolation. Returns nil, nil for a file another task has not written yet.
+local function readCodeLines(path)
+    local lines = readLines(path)
+    if not lines then return nil, nil end
+    return lines, codeLines(lines)
 end
 
 function t.codeOnly_strips_strings_and_comments_but_keeps_real_code()
@@ -82,6 +136,37 @@ function t.codeOnly_strips_strings_and_comments_but_keeps_real_code()
     eq(codeOnly("goto done"):find("goto", 1, true) and "has goto" or "no goto", "has goto", "a real goto statement")
 end
 
+function t.codeLines_tracks_a_long_string_open_across_several_lines()
+    local code = codeLines({
+        "description = _([[",
+        "visit https://example.org // and goto settings, api.engine.x()",
+        "]]),",
+    })
+    assert(code[2] == "", "expected no code text inside the long string, got " .. ("%q"):format(code[2]))
+    assert(code[3] == "),", "expected the code after the closing ]] on its own line, got " .. ("%q"):format(code[3]))
+
+    local oneLiner = codeLines({ "[[ x ]] .. y // 2" })
+    assert(oneLiner[1]:find("//", 1, true), "a real // after an open-and-close [[ ]] on one line must still be seen")
+end
+
+-- Regression, against the real file rather than an in-memory probe: mod.lua's own description is
+-- exactly this shape (`description = _([[ ... multi-line text ... ]]),`). Finds the open/close
+-- lines by their literal text and asserts every line strictly between them -- never the open or
+-- close line itself, since both also carry real code -- produces no code text at all.
+function t.codeLines_hides_mod_lua_description_from_every_rule()
+    local lines = assert(readLines("mod.lua"), "mod.lua must exist")
+    local code = codeLines(lines)
+    local openLine, closeLine
+    for n, line in ipairs(lines) do
+        if line:find("_([[", 1, true) then openLine = n end
+        if line:find("]])", 1, true) then closeLine = closeLine or n end
+    end
+    assert(openLine and closeLine and openLine < closeLine, "could not locate mod.lua's description string")
+    for n = openLine + 1, closeLine - 1 do
+        assert(code[n] == "", "expected no code text on mod.lua:" .. n .. ", got " .. ("%q"):format(code[n]))
+    end
+end
+
 -- In Transport Fever 2, `_` is the translation function. A loop variable, a local or a parameter
 -- named `_` shadows it and any later `_("text")` in that scope calls a number. The loop-variable
 -- and local patterns are ported verbatim from tpf2-bus-line-tool/test/test_lint.lua; the %f
@@ -93,6 +178,12 @@ end
 -- `function M.foo(_, x)`, `function M:foo(_)`. `[%w_.:]*` between `function` and `(` accepts that
 -- name (identifier characters, dots for a table path, one colon for a method), or nothing at all
 -- for the anonymous case, before checking the captured parameter list for a bare `_`.
+-- Known, accepted limitation: this is checked one line at a time (via codeLines(), so it is at
+-- least immune to a string or a comment spanning a `[[ ... ]]` long string), so a function
+-- declaration whose OWN parameter list spans several lines -- `local function foo(\n    _, x)` --
+-- is not detected: the bare `_` never lands on the same line as the word `function`. Nothing in
+-- res/ is written that way today (every real declaration keeps its parameter list on one line),
+-- so this is a documented gap, not a fix made here.
 local function shadowsUnderscore(code)
     if code:match("for%s+_%s*[,i]") then return true end
     if code:match("^%s*local%s+_%s*[,=]") then return true end
@@ -103,10 +194,10 @@ end
 function t.underscore_never_shadows_the_translator()
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
-        local lines = readLines(path)
+        local lines, code = readCodeLines(path)
         if lines then
             for n, line in ipairs(lines) do
-                if shadowsUnderscore(codeOnly(line)) then
+                if shadowsUnderscore(code[n]) then
                     offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                 end
             end
@@ -175,16 +266,17 @@ local function isUnderGui(path)
 end
 
 -- Checks that `needle` (a plain-text substring, not a pattern) appears in the CODE (see
--- codeOnly()) only of files for which `allowed(path)` is true; every other occurrence is an
--- offender. A mention inside a string or a comment is not a call, so it is not checked at all.
+-- codeLines()) only of files for which `allowed(path)` is true; every other occurrence is an
+-- offender. A mention inside a string, a comment, or a `[[ ... ]]` long string spanning several
+-- lines (e.g. a description) is not a call, so it is not checked at all.
 local function checkRestrictedTo(needle, allowed, label)
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
         if not allowed(path) then
-            local lines = readLines(path)
+            local lines, code = readCodeLines(path)
             if lines then
                 for n, line in ipairs(lines) do
-                    if codeOnly(line):find(needle, 1, true) then
+                    if code[n]:find(needle, 1, true) then
                         offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                     end
                 end
@@ -215,18 +307,19 @@ function t.print_is_restricted_to_log()
     checkRestrictedTo("print(", function(path) return path == LOG_PATH end, "print(")
 end
 
--- Collects every line whose CODE (see codeOnly()) matches `pattern`, across every listed file, as
+-- Collects every line whose CODE (see codeLines()) matches `pattern`, across every listed file, as
 -- file:line offender strings. `pattern` is a Lua pattern (not a plain substring); a false
--- positive from a comment or a help string that merely mentions the banned syntax is impossible
--- by construction (codeOnly already removed it), so a real false positive here would mean
--- tightening the pattern itself, not editing whatever file it fired on.
+-- positive from a comment, a string, or a `[[ ... ]]` long string spanning several lines that
+-- merely mentions the banned syntax is impossible by construction (codeLines already removed
+-- it), so a real false positive here would mean tightening the pattern itself, not editing
+-- whatever file it fired on.
 local function collectPatternOffenders(pattern)
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
-        local lines = readLines(path)
+        local lines, code = readCodeLines(path)
         if lines then
             for n, line in ipairs(lines) do
-                if codeOnly(line):match(pattern) then
+                if code[n]:match(pattern) then
                     offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                 end
             end
@@ -250,11 +343,10 @@ end
 function t.table_unpack_always_has_a_51_fallback()
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
-        local lines = readLines(path)
+        local lines, code = readCodeLines(path)
         if lines then
             for n, line in ipairs(lines) do
-                local code = codeOnly(line)
-                if code:find("table%.unpack%(") and not code:find("unpack or", 1, true) then
+                if code[n]:find("table%.unpack%(") and not code[n]:find("unpack or", 1, true) then
                     offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                 end
             end
