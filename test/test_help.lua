@@ -5,8 +5,19 @@ local eq = require("fake_api").eq
 local log = require("anujctrl/alnp/log")
 local topics = require("anujctrl/alnp/help_topics")
 local help = require("anujctrl/alnp/gui/help")
+local naming = require("anujctrl/alnp/naming")
 
 local t = {}
+
+-- Upstream alias -> its current name, per spec §7 / naming.lua's own ALIASES table (not exported,
+-- so checked by behaviour below rather than by reaching into naming.lua's internals).
+local UPSTREAM_ALIASES = {
+    { alias = "{transportType}", canonical = "{type}" },
+    { alias = "{lineType}", canonical = "{scope}" },
+    { alias = "{cargoTypes}", canonical = "{cargo}" },
+    { alias = "{townNames}", canonical = "{towns}" },
+    { alias = "{lineNumber}", canonical = "{n}" },
+}
 
 local BUS_TOOL_PATH = "/home/anujp/Documents/personal/tpf2-mods/tpf2-bus-line-tool/res/scripts/bus_line_tool_window.lua"
 
@@ -267,6 +278,38 @@ function t.topics_cover_every_required_key_with_valid_text()
     end
 
     assert(topics.get("nope") == nil)
+end
+
+-- The task brief requires the token cheat-sheet topic to name every upstream alias explicitly, so
+-- a player migrating a pattern from the original mod can find the mapping. A plain (non-pattern)
+-- find: both the braces and the alias name are literal text to look for, not Lua pattern syntax.
+function t.tokens_topic_names_every_upstream_alias_with_its_new_name()
+    local text = topics.get("patterns.tokens").text
+    for __, pair in ipairs(UPSTREAM_ALIASES) do
+        assert(text:find(pair.alias, 1, true),
+            "patterns.tokens text does not mention the alias " .. pair.alias)
+    end
+end
+
+-- help_topics.lua's list of aliases must not drift from naming.lua's actual ALIASES table.
+-- naming.lua does not export that table, so this checks behaviour instead: rendering a pattern
+-- built from the alias must equal rendering the same pattern built from the canonical token.
+function t.tokens_topic_aliases_match_namings_actual_behaviour()
+    local facts = naming.sampleFacts("bus")
+    local settings = {
+        label = { kind = { bus = "Bus" }, scope = { intercity = "Intercity" } },
+        sep = { towns = " - ", via = ", ", cargo = ", " },
+        cargo = { max = 2, mixedLabel = "Mixed", hidePassengers = true },
+        via = { max = 2 },
+        industry = { fallback = "stop" },
+        number = { first = "blank", pad = 0 },
+    }
+    local ctx = { settings = settings, kind = "bus", scope = "intercity", n = nil }
+
+    for __, pair in ipairs(UPSTREAM_ALIASES) do
+        eq(naming.render(pair.alias, facts, ctx), naming.render(pair.canonical, facts, ctx),
+            pair.alias .. " should render the same as " .. pair.canonical)
+    end
 end
 
 -- 5. help: button shows topic in panel; a second button replaces it; Close hides; panel() caches. -
