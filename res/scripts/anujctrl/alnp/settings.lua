@@ -82,16 +82,17 @@ end
 
 addRow({ path = "enabled", type = "bool", default = true, section = "general",
     label = "Enabled",
-    help = "Turns the whole mod on or off. When off, no line is ever\n"
-        .. "renamed automatically, but existing settings are kept." })
+    help = "Turns the whole mod on or off. Example: switch it off\n"
+        .. "to rename every line by hand without interference." })
 addRow({ path = "lock.prefix", type = "string", default = "", section = "general",
     label = "Never-rename prefix",
     help = "Lines whose name starts with this text are always left\n"
         .. "alone. Example: prefix \"Cst\" protects \"Cst Feeder 1\"." })
 addRow({ path = "lock.autoLockEdited", type = "bool", default = true, section = "general",
     label = "Auto-lock hand-edited names",
-    help = "When a name looks like something a player typed rather\n"
-        .. "than a default or mod name, lock it automatically." })
+    help = "Locks a name that looks hand-typed so the mod leaves it\n"
+        .. "alone. Example: renaming a line to \"Airport Express\"\n"
+        .. "locks it automatically." })
 addRow({ path = "reload.names", type = "string", default = "r,reload", section = "general",
     label = "Reload trigger names",
     help = "Rename a line once by naming it one of these words.\n"
@@ -103,8 +104,9 @@ addRow({ path = "eligible.defaultNames", type = "bool", default = true, section 
         .. "example \"Line 12\" or its translated equivalent." })
 addRow({ path = "eligible.modAssigned", type = "bool", default = true, section = "eligibility",
     label = "Re-rename mod-assigned names",
-    help = "Keeps renaming a line the mod named itself whenever its\n"
-        .. "stops or towns change. Off names new lines only once." })
+    help = "Re-renames a line the mod already named when it changes.\n"
+        .. "Example: adding a stop updates the name again; off\n"
+        .. "keeps the first name the mod ever gave it." })
 addRow({ path = "defaults.extraPrefixes", type = "string", default = "", section = "eligibility",
     label = "Extra default-name words",
     help = "Comma-separated words also treated as default names,\n"
@@ -112,19 +114,19 @@ addRow({ path = "defaults.extraPrefixes", type = "string", default = "", section
 addRow({ path = "minStops", type = "int", default = 2, min = 1, max = 10, section = "eligibility",
     label = "Minimum stops",
     help = "Lines with fewer distinct stops than this are left\n"
-        .. "alone entirely, even for a manual rename." })
+        .. "alone. Example: at 2, a single-stop shuttle is skipped." })
 
 for __, kind in ipairs(kinds.list) do
     addRow({ path = "label.kind." .. kind, type = "string", default = KIND_TYPE_TEXT[kind], section = "labels",
         label = kinds.label[kind] .. " label",
-        help = "Text substituted for {type} on " .. kinds.label[kind] .. " lines,\n"
-            .. "such as in the pattern \"{type} {towns}\"." })
+        help = "Text substituted for {type} on " .. kinds.label[kind] .. " lines.\n"
+            .. "Example: {type} {towns} becomes \"" .. KIND_TYPE_TEXT[kind] .. " Springfield\"." })
 end
 for __, scope in ipairs(kinds.scopes) do
     addRow({ path = "label.scope." .. scope, type = "string", default = SCOPE_TYPE_TEXT[scope], section = "labels",
         label = SCOPE_TYPE_TEXT[scope] .. " label",
-        help = "Text substituted for {scope} on " .. scope .. "-scope lines,\n"
-            .. "such as in the pattern \"{scope} {towns}\"." })
+        help = "Text substituted for {scope} on " .. scope .. "-scope lines.\n"
+            .. "Example: {scope} {towns} becomes \"" .. SCOPE_TYPE_TEXT[scope] .. " Springfield\"." })
 end
 
 addRow({ path = "scope.localMaxTowns", type = "int", default = 1, min = 1, max = 5, section = "scope",
@@ -134,7 +136,7 @@ addRow({ path = "scope.localMaxTowns", type = "int", default = 1, min = 1, max =
 addRow({ path = "scope.regionalMinTowns", type = "int", default = 3, min = 2, max = 10, section = "scope",
     label = "Regional: min towns",
     help = "A line serving this many distinct towns or more counts\n"
-        .. "as regional. Lines in between count as intercity." })
+        .. "as regional. Example: at 3, a 3-town line is regional." })
 
 addRow({ path = "sep.towns", type = "string", default = " \226\128\147 ", section = "separators",
     label = "Town separator",
@@ -142,35 +144,42 @@ addRow({ path = "sep.towns", type = "string", default = " \226\128\147 ", sectio
         .. "Example: joins \"Springfield\" and \"Shelbyville\"." })
 addRow({ path = "sep.via", type = "string", default = ", ", section = "separators",
     label = "Via separator",
-    help = "Text placed between intermediate towns listed in {via}\n"
-        .. "when more than one is shown." })
+    help = "Text placed between intermediate towns listed in {via}.\n"
+        .. "Example: with \", \" a line via two towns reads\n"
+        .. "\"via Ogdenville, North Haverbrook\"." })
 addRow({ path = "sep.cargo", type = "string", default = ", ", section = "separators",
     label = "Cargo separator",
     help = "Text placed between individual cargo names listed in\n"
-        .. "{cargo} when more than one is carried." })
+        .. "{cargo}. Example: with \", \", two cargo types read\n"
+        .. "\"Coal, Steel\"." })
 
 addRow({ path = "cargo.max", type = "int", default = 2, min = 1, max = 6, section = "cargo",
     label = "Max cargo names shown",
     help = "More distinct cargo types than this collapse {cargo} to\n"
-        .. "the mixed-cargo label below instead of listing them all." })
+        .. "the mixed-cargo label. Example: at 2, three cargo types\n"
+        .. "collapse to \"Mixed\"." })
 addRow({ path = "cargo.mixedLabel", type = "string", default = "Mixed", section = "cargo",
     label = "Mixed-cargo label",
     help = "Text shown for {cargo} once a line carries more distinct\n"
-        .. "cargo types than the maximum above." })
+        .. "cargo types than the maximum above, e.g. \"Mixed\" for a\n"
+        .. "line hauling coal, steel and ore." })
 addRow({ path = "cargo.hidePassengers", type = "bool", default = true, section = "cargo",
     label = "Hide passengers on passenger-only lines",
-    help = "Omits the word for passengers from {cargo} when a line\n"
-        .. "carries passengers and nothing else." })
+    help = "Omits the word for passengers from {cargo} on a\n"
+        .. "passengers-only line, so it renders empty instead of\n"
+        .. "\"Passengers\"." })
 
 addRow({ path = "via.max", type = "int", default = 2, min = 0, max = 4, section = "via",
     label = "Max via towns shown",
     help = "Intermediate towns beyond this count are left out of\n"
-        .. "{via}. Zero means {via} always renders empty." })
+        .. "{via}. Example: at 2, a line through four towns shows\n"
+        .. "only the middle two towns." })
 
 addRow({ path = "industry.radius", type = "int", default = 400, min = 50, max = 2000, section = "industry",
     label = "Search radius",
     help = "How far from each end stop the mod looks for a nearby\n"
-        .. "industry building, in game distance units." })
+        .. "industry, in game distance units. Example: at 400, a\n"
+        .. "coal mine 300 units from the stop is found." })
 addRow({ path = "industry.fallback", type = "enum", default = "stop", values = { "stop", "town", "empty" }, section = "industry",
     label = "When no industry is found",
     help = "\"stop\" shows the station name, \"town\" shows the town\n"
@@ -192,15 +201,19 @@ addRow({ path = "number.pad", type = "int", default = 0, min = 0, max = 4, secti
 addRow({ path = "scan.linesPerTick", type = "int", default = 5, min = 1, max = 50, section = "performance",
     label = "Lines checked per tick",
     help = "How many lines the mod examines on each game tick.\n"
-        .. "Higher reacts to changes faster but costs more per frame." })
+        .. "Example: at 5, a save with 300 lines is fully checked\n"
+        .. "about every 12 seconds." })
 addRow({ path = "scan.settleSeconds", type = "int", default = 5, min = 0, max = 60, section = "performance",
     label = "Settle delay",
-    help = "How long a line's stops must stay unchanged, in real\n"
-        .. "seconds, before the mod reads it and considers a rename." })
+    help = "How long, in real seconds, a line's stops, vehicle count\n"
+        .. "and current name must all stay the same before the mod\n"
+        .. "reads it and considers a rename; changing any of them\n"
+        .. "restarts the wait, e.g. adding a vehicle or renaming it." })
 addRow({ path = "preview.linesPerFrame", type = "int", default = 25, min = 1, max = 200, section = "performance",
     label = "Lines previewed per frame",
     help = "How many lines the Lines tab reads per GUI frame while\n"
-        .. "building a full preview of proposed names." })
+        .. "building a full preview. Example: at 25, previewing 250\n"
+        .. "lines takes about 10 frames." })
 
 addRow({ path = "log.level", type = "enum", default = "info", values = { "error", "info", "debug" }, section = "logging",
     label = "Log level",
@@ -210,34 +223,41 @@ addRow({ path = "log.level", type = "enum", default = "info", values = { "error"
 addRow({ path = "patterns.default", type = "string", default = DEFAULT_PATTERN, nonEmpty = true, section = "patterns",
     label = "Default pattern",
     help = "Naming pattern used for any line kind without its own\n"
-        .. "custom pattern below. See the token cheat-sheet for syntax." })
+        .. "custom pattern below. Example: {type} {towns} renders\n"
+        .. "as \"Bus Springfield\" for a one-town bus line." })
 for __, kind in ipairs(kinds.list) do
     local default = kinds.cargo[kind] and CARGO_PATTERN or ""
+    local lowerLabel = kinds.label[kind]:lower()
     addRow({ path = "patterns." .. kind, type = "string", default = default, section = "patterns",
         label = kinds.label[kind] .. " pattern",
-        help = "Naming pattern used only for " .. kinds.label[kind]:lower() .. " lines.\n"
-            .. "Blank inherits the default pattern above." })
+        help = "Naming pattern used only for " .. lowerLabel .. " lines.\n"
+            .. "Example: leaving it blank makes " .. lowerLabel .. " lines\n"
+            .. "use the default pattern above instead." })
 end
 for __, kind in ipairs(kinds.list) do
     addRow({ path = "kinds." .. kind .. ".autoRename", type = "bool", default = true, section = "patterns",
         label = kinds.label[kind] .. " auto-rename",
-        help = "Turns automatic renaming on or off for " .. kinds.label[kind]:lower() .. " lines,\n"
-            .. "leaving other settings unchanged." })
+        help = "Turns automatic renaming on or off for just this kind.\n"
+            .. "Example: turn off " .. kinds.label[kind] .. " to rename\n"
+            .. "them yourself while every other kind keeps auto-renaming." })
 end
 
 settings.schema = schema
+
+-- A preset's pattern table: the given default, plus the given cargo pattern for every cargo kind.
+local function cargoPatterns(defaultPattern, cargoPattern)
+    local patterns = { default = defaultPattern }
+    for __, kind in ipairs(kinds.list) do
+        if kinds.cargo[kind] then patterns[kind] = cargoPattern end
+    end
+    return patterns
+end
 
 settings.presets = {
     { key = "simple", label = "Simple",
       help = "The shipped defaults: town names for passenger lines,\n"
           .. "cargo and industries for freight.",
-      patterns = (function()
-          local patterns = { default = DEFAULT_PATTERN }
-          for __, kind in ipairs(kinds.list) do
-              if kinds.cargo[kind] then patterns[kind] = CARGO_PATTERN end
-          end
-          return patterns
-      end)() },
+      patterns = cargoPatterns(DEFAULT_PATTERN, CARGO_PATTERN) },
     { key = "upstream", label = "Upstream",
       help = "The original Auto Line Namer style: type, cargo, towns,\n"
           .. "scope and a number, all in one.",
@@ -245,13 +265,7 @@ settings.presets = {
     { key = "detailed", label = "Detailed",
       help = "Station names instead of town names, with the via towns\n"
           .. "shown in between.",
-      patterns = (function()
-          local patterns = { default = DETAILED_PATTERN }
-          for __, kind in ipairs(kinds.list) do
-              if kinds.cargo[kind] then patterns[kind] = DETAILED_CARGO_PATTERN end
-          end
-          return patterns
-      end)() },
+      patterns = cargoPatterns(DETAILED_PATTERN, DETAILED_CARGO_PATTERN) },
 }
 
 local function splitPath(path)

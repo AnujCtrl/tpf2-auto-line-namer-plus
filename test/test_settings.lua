@@ -57,6 +57,14 @@ function t.no_help_line_is_longer_than_72_characters()
     for __, section in ipairs(settings.sections) do checkLines(section.help, "section " .. section.key) end
 end
 
+function t.every_row_help_has_a_description_line_and_an_example_line()
+    for __, row in ipairs(settings.schema) do
+        local lineCount = 0
+        for __ in (row.help .. "\n"):gmatch("(.-)\n") do lineCount = lineCount + 1 end
+        assert(lineCount >= 2, "row " .. row.path .. " help needs at least a description and an example line")
+    end
+end
+
 function t.every_kind_has_a_label_pattern_and_autorename_row()
     for __, kind in ipairs(kinds.list) do
         assert(settings.row("label.kind." .. kind), "missing label.kind." .. kind)
