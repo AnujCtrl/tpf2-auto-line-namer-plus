@@ -63,4 +63,21 @@ function t.guard_logs_a_traceback_and_returns_nil_on_error()
     assert(lines[1]:find("stack traceback", 1, true), lines[1])
 end
 
+function t.wrap_passes_arguments_and_results_through()
+    capture()
+    local wrapped = log.wrap("sum", function(x, y) return x + y, "ok" end)
+    local a, b = wrapped(2, 3)
+    eq({ a, b }, { 5, "ok" })
+end
+
+function t.wrap_logs_the_label_and_does_not_raise_on_error()
+    local lines = capture()
+    local wrapped = log.wrap("tick", function() error("kaput") end)
+    local result = wrapped()
+    eq(result, nil)
+    assert(#lines == 1, "one log line expected")
+    assert(lines[1]:find("aln_plus: tick: ", 1, true), lines[1])
+    assert(lines[1]:find("kaput", 1, true), lines[1])
+end
+
 return t

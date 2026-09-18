@@ -34,7 +34,7 @@ local function addTopBarButton(toggleWindow)
             return log.error("gameInfo layout is nil.")
         end
         local button = api.gui.comp.Button.new(api.gui.comp.TextView.new("[ALN+]"), true)
-        button:onClick(toggleWindow)
+        button:onClick(log.wrap("window.topBarButton", toggleWindow))
         button:setTooltip(_(help_topics.get("topbar.button").text))
         layout:addItem(api.gui.comp.Component.new("VerticalLine"))
         layout:addItem(button)

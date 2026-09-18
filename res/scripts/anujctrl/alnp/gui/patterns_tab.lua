@@ -10,6 +10,7 @@ local settings = require "anujctrl/alnp/settings"
 local help = require "anujctrl/alnp/gui/help"
 local topics = require "anujctrl/alnp/help_topics"
 local sync = require "anujctrl/alnp/gui/sync"
+local log = require "anujctrl/alnp/log"
 
 local patternsTab = {}
 
@@ -41,7 +42,7 @@ end
 
 -- The default row always previews as kind "bus" (spec: "The default row previews as kind bus").
 local function recomputeDefaultPreview()
-    current.defaultPreview:setText(renderPreview(current.defaultField:getText(), "bus", current.state.settings))
+    current.defaultPreview:setText(renderPreview(current.defaultField:getText(), "bus", current.state.settings), false)
 end
 
 -- The pattern a kind's row is currently previewing: its own field while custom is ticked,
@@ -54,7 +55,7 @@ end
 
 local function recomputeKindPreview(kind)
     local kindRow = current.kindRows[kind]
-    kindRow.preview:setText(renderPreview(patternForKind(kind), kind, current.state.settings))
+    kindRow.preview:setText(renderPreview(patternForKind(kind), kind, current.state.settings), false)
 end
 
 -- Labels and separators may have changed even when no pattern text did, so every preview is
@@ -75,26 +76,26 @@ local function buildPresetRow()
     local applyButton = api.gui.comp.Button.new(applyLabel, true)
 
     -- Changing the preset between the two confirmation clicks cancels the pending confirmation.
-    combo:onIndexChanged(function(__)
+    combo:onIndexChanged(log.wrap("patterns_tab.presetCombo", function(__)
         if current.pendingPresetKey then
             current.pendingPresetKey = nil
-            applyLabel:setText(_("Apply preset"))
+            applyLabel:setText(_("Apply preset"), false)
         end
-    end)
+    end))
 
-    applyButton:onClick(function()
+    applyButton:onClick(log.wrap("patterns_tab.applyPreset", function()
         local index = combo:getCurrentIndex() or 0
         local preset = settings.presets[index + 1]
         if not preset then return end
         if current.pendingPresetKey == preset.key then
             current.pendingPresetKey = nil
-            applyLabel:setText(_("Apply preset"))
+            applyLabel:setText(_("Apply preset"), false)
             current.send("preset", { key = preset.key })
         else
             current.pendingPresetKey = preset.key
-            applyLabel:setText(_("Click again to overwrite all patterns"))
+            applyLabel:setText(_("Click again to overwrite all patterns"), false)
         end
-    end)
+    end))
 
     return newRow(help.labelled(_("Preset"), "patterns.preset"), combo, applyButton)
 end
@@ -103,11 +104,11 @@ local function buildDefaultRow()
     local field = api.gui.comp.TextInputField.new("")
     local preview = api.gui.comp.TextView.new("")
 
-    field:onChange(function(text)
+    field:onChange(log.wrap("patterns_tab.defaultField", function(text)
         current.sync:sent("patterns.default", text)
         current.send("set", { path = "patterns.default", value = text })
         recomputeAllPreviews() -- every kind that inherits the default previews from it too
-    end)
+    end))
 
     current.defaultField = field
     current.defaultPreview = preview
@@ -129,33 +130,33 @@ local function buildKindRow(kind)
 
     local path = "patterns." .. kind
 
-    autoRename:onToggle(function(value)
+    autoRename:onToggle(log.wrap("patterns_tab.autoRename:" .. kind, function(value)
         local autoPath = "kinds." .. kind .. ".autoRename"
         current.sync:sent(autoPath, value)
         current.send("set", { path = autoPath, value = value })
-    end)
+    end))
 
     -- Ticking sends the current default pattern text as this kind's own; unticking sends "" so
     -- it inherits again. The field mirrors whichever pattern is now in effect either way.
-    custom:onToggle(function(value)
+    custom:onToggle(log.wrap("patterns_tab.custom:" .. kind, function(value)
         local newValue = ""
         if value then newValue = current.defaultField:getText() end
         current.sync:sent(path, newValue)
         current.send("set", { path = path, value = newValue })
         field:setEnabled(value)
         if value then
-            field:setText(newValue)
+            field:setText(newValue, false)
         else
-            field:setText(current.defaultField:getText())
+            field:setText(current.defaultField:getText(), false)
         end
         recomputeKindPreview(kind)
-    end)
+    end))
 
-    field:onChange(function(text)
+    field:onChange(log.wrap("patterns_tab.kindField:" .. kind, function(text)
         current.sync:sent(path, text)
         current.send("set", { path = path, value = text })
         recomputeKindPreview(kind)
-    end)
+    end))
 
     current.kindRows[kind] = {
         customCheckbox = custom,
@@ -202,6 +203,8 @@ function patternsTab.build(state, send)
     content:setLayout(layout)
 
     local scrollArea = api.gui.comp.ScrollArea.new(content, "alnpPatternsScroll")
+    -- Same cap as gui/lines_tab.lua and gui/schema_form.lua, inside the 900x600 window (window.lua).
+    scrollArea:setMaximumSize(api.gui.util.Size.new(860, 380))
 
     patternsTab.refresh(state) -- seeds every widget from the real starting values
 
@@ -219,7 +222,7 @@ function patternsTab.refresh(state)
     local defaultValue = settings.get(tbl, "patterns.default")
     if current.sync:shouldApply("patterns.default", defaultValue) then
         if current.defaultField:getText() ~= defaultValue then
-            current.defaultField:setText(defaultValue)
+            current.defaultField:setText(defaultValue, false)
         end
     end
 
@@ -234,7 +237,7 @@ function patternsTab.refresh(state)
             if kindRow.customCheckbox:isSelected() ~= shouldBeCustom or kindRow.patternField:getText() ~= desiredText then
                 kindRow.customCheckbox:setSelected(shouldBeCustom, false)
                 kindRow.patternField:setEnabled(shouldBeCustom)
-                kindRow.patternField:setText(desiredText)
+                kindRow.patternField:setText(desiredText, false)
             end
         end
 

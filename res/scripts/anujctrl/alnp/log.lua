@@ -46,4 +46,9 @@ function log.guard(label, fn, ...)
     return nil
 end
 
+-- A function that runs fn under log.guard, for widget callbacks.
+function log.wrap(label, fn)
+    return function(...) return log.guard(label, fn, ...) end
+end
+
 return log

@@ -1,5 +1,7 @@
--- Static guards over every file the mod ships: `_` shadowing, the layering rules and Lua-5.1-only
--- syntax are only ever revealed by the game at runtime, so they are checked here as plain text.
+-- Static guards over every file the mod ships: `_` shadowing, the layering rules, and syntax
+-- outside the Lua 5.1/5.2 common subset -- the target, since the game embeds 5.2.2, not 5.1 (see
+-- the task brief) -- are only ever revealed by the game at runtime, so they are checked here as
+-- plain text.
 -- Scans every .lua file under res/ plus mod.lua and strings.lua; other tasks are writing some of
 -- these files right now, so a listed path that does not exist yet is skipped, not an error.
 local t = {}
@@ -307,6 +309,61 @@ function t.print_is_restricted_to_log()
     checkRestrictedTo("print(", function(path) return path == LOG_PATH end, "print(")
 end
 
+-- Spec §11: every widget event registered under gui/ must run under log.guard, or an error inside
+-- one reaches the game instead of being logged. `code` is one line already reduced to code-only
+-- text (see codeLines()); a handler registration only ever recognised there, so a mention of
+-- ":onClick(" inside a string or a comment can never trip this.
+local HANDLER_TRIGGERS = {
+    ":onClick(", ":onToggle(", ":onChange(", ":onIndexChanged(", ":onValueChanged(", ":onClose(",
+}
+
+local function registersUnwrappedHandler(code)
+    for __, trigger in ipairs(HANDLER_TRIGGERS) do
+        if code:find(trigger, 1, true) then
+            return not code:find("log.wrap(", 1, true)
+        end
+    end
+    return false
+end
+
+function t.every_gui_handler_registration_is_wrapped_in_log_wrap()
+    local offenders = {}
+    for __, path in ipairs(findLuaFiles()) do
+        if isUnderGui(path) then
+            local lines, code = readCodeLines(path)
+            if lines then
+                for n, line in ipairs(lines) do
+                    if registersUnwrappedHandler(code[n]) then
+                        offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
+                    end
+                end
+            end
+        end
+    end
+    assert(#offenders == 0, "gui handler registered without log.wrap(...) on the same line:\n  "
+        .. table.concat(offenders, "\n  "))
+end
+
+function t.handler_registration_checker_catches_unwrapped_and_passes_wrapped()
+    local mustReport = {
+        "checkbox:onToggle(function(v) send(v) end)",
+        "button:onClick(handler)",
+        "field:onChange(function(text) end)",
+    }
+    for __, line in ipairs(mustReport) do
+        assert(registersUnwrappedHandler(codeOnly(line)), "expected to catch: " .. line)
+    end
+
+    local mustNotReport = {
+        'checkbox:onToggle(log.wrap("x", function(v) send(v) end))',
+        'button:onClick(log.wrap("y", handler))',
+        "layout:addItem(x)",
+    }
+    for __, line in ipairs(mustNotReport) do
+        assert(not registersUnwrappedHandler(codeOnly(line)), "expected NOT to catch: " .. line)
+    end
+end
+
 -- Collects every line whose CODE (see codeLines()) matches `pattern`, across every listed file, as
 -- file:line offender strings. `pattern` is a Lua pattern (not a plain substring); a false
 -- positive from a comment, a string, or a `[[ ... ]]` long string spanning several lines that
@@ -328,6 +385,10 @@ local function collectPatternOffenders(pattern)
     return offenders
 end
 
+-- The rules from here down reject syntax newer than Lua 5.1 (the target is the common subset of
+-- 5.1 and 5.2: the game embeds 5.2.2, and the tests also run under 5.1 and luajit -- see the task
+-- brief), not merely "5.1-only" syntax; `goto` in particular is a Lua 5.2 addition that 5.1 lacks,
+-- so it stays banned even though the game's own interpreter would accept it.
 function t.no_goto_statement()
     local offenders = collectPatternOffenders("%f[%a]goto%s+%a")
     assert(#offenders == 0, "`goto` used in:\n  " .. table.concat(offenders, "\n  "))
@@ -369,6 +430,88 @@ function t.no_local_attributes()
     local offenders = collectPatternOffenders("<const>")
     for __, offender in ipairs(collectPatternOffenders("<close>")) do offenders[#offenders + 1] = offender end
     assert(#offenders == 0, "`<const>`/`<close>` used in:\n  " .. table.concat(offenders, "\n  "))
+end
+
+-- The other direction: Lua 5.2 REMOVED these 5.1 functions outright (`strings TransportFever2`
+-- shows the game embeds 5.2.2, not 5.1 -- see the task brief), so calling any of them would work
+-- under the 5.1/luajit test run but raise "attempt to call a nil value" in the actual game.
+local REMOVED_IN_LUA_52 = { "setfenv(", "getfenv(", "loadstring(", "table.getn(", "table.maxn(" }
+
+local function usesFunctionRemovedInLua52(code)
+    for __, needle in ipairs(REMOVED_IN_LUA_52) do
+        if code:find(needle, 1, true) then return true end
+    end
+    return false
+end
+
+function t.no_function_removed_in_lua_52()
+    local offenders = {}
+    for __, path in ipairs(findLuaFiles()) do
+        local lines, code = readCodeLines(path)
+        if lines then
+            for n, line in ipairs(lines) do
+                if usesFunctionRemovedInLua52(code[n]) then
+                    offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
+                end
+            end
+        end
+    end
+    assert(#offenders == 0, "a function Lua 5.2 removed used in:\n  " .. table.concat(offenders, "\n  "))
+end
+
+function t.function_removed_in_52_checker_catches_each_one_and_passes_clean_code()
+    local mustReport = {
+        "setfenv(1, env)",
+        "local e = getfenv(f)",
+        "local chunk = loadstring(code)",
+        "local n = table.getn(t)",
+        "local n = table.maxn(t)",
+    }
+    for __, line in ipairs(mustReport) do
+        assert(usesFunctionRemovedInLua52(codeOnly(line)), "expected to catch: " .. line)
+    end
+
+    local mustNotReport = {
+        "local n = #t",
+        "local chunk = load(code)",
+        'local text = "setfenv(1, env)"', -- inside a string: codeOnly already stripped it
+    }
+    for __, line in ipairs(mustNotReport) do
+        assert(not usesFunctionRemovedInLua52(codeOnly(line)), "expected NOT to catch: " .. line)
+    end
+end
+
+-- Lua 5.2 also removed the 5.1 `module(...)` declaration statement outright. Only a bare call at
+-- the start of a statement is that declaration -- never a method call on some other table
+-- (`ns.module(...)`) and never a use of an identifier that merely contains the word
+-- (`mymodule(...)`, `modules[1]`) -- so the pattern anchors to the start of the (code-only) line.
+local function isBareModuleCall(code)
+    return code:match("^%s*module%s*%(") ~= nil
+end
+
+function t.no_bare_module_call()
+    local offenders = collectPatternOffenders("^%s*module%s*%(")
+    assert(#offenders == 0, "a bare `module(...)` declaration used in:\n  " .. table.concat(offenders, "\n  "))
+end
+
+function t.bare_module_call_checker_catches_the_51_declaration_and_passes_everything_else()
+    local mustReport = {
+        'module("mymod", package.seeall)',
+        "    module(...)",
+    }
+    for __, line in ipairs(mustReport) do
+        assert(isBareModuleCall(codeOnly(line)), "expected to catch: " .. line)
+    end
+
+    local mustNotReport = {
+        "ns.module(x)",
+        'local mymodule = require("mymodule")',
+        "modules[1] = foo",
+        "local module = 5",
+    }
+    for __, line in ipairs(mustNotReport) do
+        assert(not isBareModuleCall(codeOnly(line)), "expected NOT to catch: " .. line)
+    end
 end
 
 function t.no_line_over_150_characters()

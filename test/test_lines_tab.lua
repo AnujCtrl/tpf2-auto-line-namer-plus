@@ -462,6 +462,68 @@ function t.a_hand_rename_after_the_preview_unticks_the_row_and_apply_skips_it()
 end
 
 -- ------------------------------------------------------------------------------------------
+-- 5c (B4). A row locked without a name change is unticked once, but keeps showing its proposal
+-- (never the false "name changed" notice) and is not permanently refused: the engine's apply
+-- handler accepts an explicit re-tick, so a re-ticked row must survive a later refresh and be sent.
+-- ------------------------------------------------------------------------------------------
+function t.a_lock_with_no_name_change_keeps_the_proposal_and_allows_a_re_tick()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local state = newState()
+    local send, calls = recordingSend()
+    local component = linesTab.build(state, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+    eq(table_.rows[1][1]:isSelected(), true, "line 1 starts ticked (default name)")
+    local proposedBefore = fakeGui.text(table_.rows[1][4])
+
+    -- Line 1 becomes locked without ever being renamed.
+    local lockedState = { settings = state.settings, records = { [1] = { locked = "player" } } }
+    linesTab.clock = function() return 5000 end
+    linesTab.refresh(lockedState)
+
+    eq(table_.rows[1][1]:isSelected(), false, "a newly-locked row is unticked")
+    eq(fakeGui.text(table_.rows[1][4]), proposedBefore,
+        "the proposal is still shown -- the name never changed, so it is not stale")
+
+    -- The player re-ticks it by hand; a later refresh (still locked, name still unchanged) must
+    -- not force it back off, and Apply checked must send it.
+    table_.rows[1][1]:setSelected(true, false)
+    linesTab.clock = function() return 5001 end
+    linesTab.refresh(lockedState)
+    eq(table_.rows[1][1]:isSelected(), true, "a re-ticked, merely-locked row must not be re-forced off")
+
+    clickLabelled(component, "Apply checked")
+    local byLine = renamesByLine(calls)
+    assert(byLine[1] ~= nil, "a re-ticked, merely-locked row must be sent")
+end
+
+-- ------------------------------------------------------------------------------------------
+-- 5d (B4). Unlike a mere lock, a changed name needs a fresh preview: re-ticking must not help.
+-- ------------------------------------------------------------------------------------------
+function t.a_hand_renamed_row_stays_refused_even_after_a_re_tick()
+    linesTab.reset()
+    help.reset()
+    local world = buildWorld()
+    local state = newState()
+    local send, calls = recordingSend()
+    local component = linesTab.build(state, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    world.renameLine(1, "Airport Express")
+    linesTab.clock = function() return 5000 end
+    linesTab.refresh(state)
+    eq(table_.rows[1][1]:isSelected(), false, "the renamed row is unticked")
+
+    table_.rows[1][1]:setSelected(true, false)
+    clickLabelled(component, "Apply checked")
+    local byLine = renamesByLine(calls)
+    eq(byLine[1], nil, "a row whose name changed must stay refused even after a re-tick")
+end
+
+-- ------------------------------------------------------------------------------------------
 -- 6. Lock box: ticking sends lock=true; unticking a player lock sends lock=false; unticking
 --    an edited (or prefix) lock sends nothing, re-ticks itself, and explains in the status.
 -- ------------------------------------------------------------------------------------------

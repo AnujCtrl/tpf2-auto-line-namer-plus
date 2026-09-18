@@ -325,4 +325,55 @@ function t.token_reference_tooltip_contains_every_token_and_topic_text()
     end
 end
 
+-- 11. every setText on a TextInputField in the build and refresh paths passes an explicit false,
+-- so nothing is sent even if the game were to emit onChange by default (undocumented behaviour;
+-- see the task brief). Hostility is injected by wrapping the constructor: a setText call whose
+-- emit flag is nil (never one that is explicitly false) fires onChange, exactly as an emit-by-
+-- default game would.
+function t.building_and_refreshing_send_nothing_even_with_a_hostile_emit_default()
+    patternsTab.reset()
+    help.reset()
+
+    local realNew = api.gui.comp.TextInputField.new
+    api.gui.comp.TextInputField.new = function(...)
+        local widget = realNew(...)
+        local realSetText = widget.setText
+        widget.setText = function(selfArg, text, emit)
+            realSetText(selfArg, text, emit)
+            if emit == nil and selfArg.handlers.onChange then
+                selfArg.handlers.onChange(text)
+            end
+        end
+        return widget
+    end
+
+    local state = newState()
+    local sent, send = sendRecorder()
+    local __ = patternsTab.build(state, send)
+    eq(#sent, 0)
+
+    local nextState = newState()
+    nextState.settings.patterns.default = "{type} {n}"
+    patternsTab.refresh(nextState)
+    eq(#sent, 0)
+
+    api.gui.comp.TextInputField.new = realNew
+end
+
+-- 12. build()'s scroll area is capped to the same size as the other tabs' scroll areas. --------------
+
+function t.scroll_area_has_the_shared_maximum_size()
+    patternsTab.reset()
+    help.reset()
+    local scrollArea = patternsTab.build(newState(), function() end)
+
+    local sizeCall = nil
+    for __, call in ipairs(scrollArea.calls) do
+        if call.name == "setMaximumSize" then sizeCall = call end
+    end
+    assert(sizeCall, "expected a setMaximumSize call on the scroll area")
+    eq(sizeCall.args[1].args[1], 860)
+    eq(sizeCall.args[1].args[2], 380)
+end
+
 return t

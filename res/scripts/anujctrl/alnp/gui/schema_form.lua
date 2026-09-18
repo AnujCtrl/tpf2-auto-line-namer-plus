@@ -39,9 +39,9 @@ end
 local function buildBoolEditor(row, value, send)
     local checkbox = api.gui.comp.CheckBox.new()
     checkbox:setSelected(value, false)
-    checkbox:onToggle(function(v)
+    checkbox:onToggle(log.wrap("schema_form.bool:" .. row.path, function(v)
         commitValue(row.path, v, send)
-    end)
+    end))
     return checkbox, {
         get = function() return checkbox:isSelected() end,
         set = function(newValue) checkbox:setSelected(newValue, false) end,
@@ -51,9 +51,9 @@ end
 local function buildStringEditor(row, value, send)
     local field = api.gui.comp.TextInputField.new()
     field:setText(value, false)
-    field:onChange(function(text)
+    field:onChange(log.wrap("schema_form.string:" .. row.path, function(text)
         commitValue(row.path, text, send)
-    end)
+    end))
     return field, {
         get = function() return field:getText() end,
         set = function(newValue) field:setText(newValue, false) end,
@@ -68,9 +68,9 @@ local function buildEnumEditor(row, value, send)
         if choice == value then selected = i - 1 end
     end
     combo:setSelected(selected, false)
-    combo:onIndexChanged(function(index)
+    combo:onIndexChanged(log.wrap("schema_form.enum:" .. row.path, function(index)
         commitValue(row.path, row.values[index + 1], send)
-    end)
+    end))
     return combo, {
         get = function() return row.values[combo:getCurrentIndex() + 1] end,
         set = function(newValue)
@@ -97,12 +97,12 @@ local function buildSliderEditor(row, value, send)
     slider:setValue(value, false)
 
     local valueView = api.gui.comp.TextView.new(tostring(value))
-    slider:onValueChanged(function(v)
+    slider:onValueChanged(log.wrap("schema_form.slider:" .. row.path, function(v)
         local newValue = v
         if row.type == "int" then newValue = math.floor(v + 0.5) end
-        valueView:setText(tostring(newValue))
+        valueView:setText(tostring(newValue), false)
         commitValue(row.path, newValue, send)
-    end)
+    end))
 
     local layout = api.gui.layout.BoxLayout.new("HORIZONTAL")
     layout:addItem(slider)
@@ -114,7 +114,7 @@ local function buildSliderEditor(row, value, send)
         get = function() return slider:getValue() end,
         set = function(newValue)
             slider:setValue(newValue, false)
-            valueView:setText(tostring(newValue))
+            valueView:setText(tostring(newValue), false)
         end,
     }
 end
@@ -131,14 +131,14 @@ end
 local function buildFallbackNumberEditor(row, value, send)
     local field = api.gui.comp.TextInputField.new()
     field:setText(tostring(value), false)
-    field:onChange(function(text)
+    field:onChange(log.wrap("schema_form.numberFallback:" .. row.path, function(text)
         local number = tonumber(text)
         if number ~= nil then
             commitValue(row.path, number, send)
         else
             syncInstance:sent(row.path, text)
         end
-    end)
+    end))
     return field, {
         get = function() return tonumber(field:getText()) end,
         set = function(newValue) field:setText(tostring(newValue), false) end,
@@ -188,9 +188,9 @@ local function buildSectionHeading(section, send)
     layout:addItem(help.buttonFor(section.label, section.help))
 
     local resetButton = api.gui.comp.Button.new(api.gui.comp.TextView.new(_("Reset section")), true)
-    resetButton:onClick(function()
+    resetButton:onClick(log.wrap("schema_form.resetSection:" .. section.key, function()
         send("resetSection", { section = section.key })
-    end)
+    end))
     layout:addItem(resetButton)
     layout:addItem(help.button("reset.section"))
 
@@ -202,7 +202,7 @@ end
 local function buildFooterButton(label, topicKey, onClick)
     local layout = api.gui.layout.BoxLayout.new("HORIZONTAL")
     local button = api.gui.comp.Button.new(api.gui.comp.TextView.new(label), true)
-    button:onClick(onClick)
+    button:onClick(log.wrap("schema_form.footer:" .. topicKey, onClick))
     layout:addItem(button)
     layout:addItem(help.button(topicKey))
 
@@ -239,6 +239,8 @@ function schemaForm.build(tabKey, state, send)
 
     local scrollArea = api.gui.comp.ScrollArea.new(api.gui.comp.Component.new(" "), " ")
     scrollArea:setContent(content)
+    -- Same cap as gui/lines_tab.lua and gui/patterns_tab.lua, inside the 900x600 window (window.lua).
+    scrollArea:setMaximumSize(api.gui.util.Size.new(860, 380))
     return scrollArea
 end
 

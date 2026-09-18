@@ -21,9 +21,9 @@ local function ensurePanel()
     panelTitleView = api.gui.comp.TextView.new("")
     panelBodyView = api.gui.comp.TextView.new("")
     local closeButton = api.gui.comp.Button.new(api.gui.comp.TextView.new(_("Close")), true)
-    closeButton:onClick(function()
+    closeButton:onClick(log.wrap("help.closeButton", function()
         panelComponent:setVisible(false, false)
-    end)
+    end))
 
     layout:addItem(panelTitleView)
     layout:addItem(panelBodyView)
@@ -43,17 +43,17 @@ end
 -- Fills the panel with title/text (both translated at display time, per §10.1) and shows it.
 function help.show(title, text)
     ensurePanel()
-    panelTitleView:setText(_(title))
-    panelBodyView:setText(_(text))
+    panelTitleView:setText(_(title), false)
+    panelBodyView:setText(_(text), false)
     panelComponent:setVisible(true, false)
 end
 
 local function buildButton(title, text)
     local button = api.gui.comp.Button.new(api.gui.comp.TextView.new("i"), true)
     button:setTooltip(_(text))
-    button:onClick(function()
+    button:onClick(log.wrap("help.infoButton", function()
         help.show(title, text)
-    end)
+    end))
     return button
 end
 

@@ -401,4 +401,21 @@ function t.fallback_field_survives_unparsable_text_until_sync_times_out_then_cat
     eq(field:getText(), "12", "once the timeout passes, a refresh may show the real value again")
 end
 
+-- 10. build()'s scroll area is capped to the same size as the other tabs' scroll areas. --------------
+
+function t.scroll_area_has_the_shared_maximum_size()
+    resetAll()
+    local state = { settings = settings.defaults() }
+    local __, send = recordingSend()
+    local scrollArea = schemaForm.build("general", state, send)
+
+    local sizeCall = nil
+    for __, call in ipairs(scrollArea.calls) do
+        if call.name == "setMaximumSize" then sizeCall = call end
+    end
+    assert(sizeCall, "expected a setMaximumSize call on the scroll area")
+    eq(sizeCall.args[1].args[1], 860)
+    eq(sizeCall.args[1].args[2], 380)
+end
+
 return t

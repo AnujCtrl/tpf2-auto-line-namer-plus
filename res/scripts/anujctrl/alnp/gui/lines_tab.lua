@@ -10,6 +10,7 @@ local propose = require "anujctrl/alnp/propose"
 local tracker = require "anujctrl/alnp/tracker"
 local kinds = require "anujctrl/alnp/kinds"
 local help = require "anujctrl/alnp/gui/help"
+local log = require "anujctrl/alnp/log"
 
 local linesTab = {}
 
@@ -102,28 +103,32 @@ local function addRow(id, f, tbl)
 
     -- nameAtPreview is what the proposal was computed against; the engine is told it with every
     -- apply item and refuses anything whose line has been renamed since (see engine handlers.apply).
+    -- stale: the name changed since preview, so the proposal is invalid until previewed again --
+    -- permanent, and blocks "Apply checked" even if the player re-ticks the row.
+    -- lockNoticed: the row was already unticked once for becoming locked with its name unchanged,
+    -- so a later refresh does not keep re-unticking a row the player has since re-ticked by hand.
     local row = {
         id = id, applyBox = applyBox, currentView = currentView, proposedView = proposedView,
         lockBox = lockBox, name = name, n = n, key = key, hasProposal = hasProposal, lock = lock,
-        nameAtPreview = f.name, stale = false,
+        nameAtPreview = f.name, stale = false, lockNoticed = false,
     }
     rows[#rows + 1] = row
 
-    lockBox:onToggle(function(newValue)
+    lockBox:onToggle(log.wrap("lines_tab.lock:" .. tostring(id), function(newValue)
         if newValue == false and (row.lock == "edited" or row.lock == "prefix") then
             row.lockBox:setSelected(true, false)
             statusView:setText(_("This lock clears by renaming the line, or by removing the lock "
-                .. "prefix -- not by unticking it here."))
+                .. "prefix -- not by unticking it here."), false)
             return
         end
         row.lock = newValue and "player" or nil
-        row.lockBox:setText(lockLabelFor(row.lock))
+        row.lockBox:setText(lockLabelFor(row.lock), false)
         send("lock", { line = id, locked = newValue })
-    end)
+    end))
 
-    renameButton:onClick(function()
+    renameButton:onClick(log.wrap("lines_tab.renameNow:" .. tostring(id), function()
         send("renameNow", { line = id })
-    end)
+    end))
 
     tableWidget:addRow({ applyBox, kindView, currentView, proposedView, lockBox, renameButton })
 end
@@ -144,7 +149,7 @@ local function startScan()
     tableWidget:deleteAll()
     rows = {}
     everPreviewed = true
-    statusView:setText(scanningStatus(0, scanTotal))
+    statusView:setText(scanningStatus(0, scanTotal), false)
 end
 
 local function applyChecked()
@@ -158,14 +163,14 @@ local function applyChecked()
         end
     end
     if #renames == 0 then
-        statusView:setText(_("Nothing is ticked to apply."))
+        statusView:setText(_("Nothing is ticked to apply."), false)
         return
     end
     send("apply", { renames = renames })
     for __, row in ipairs(checkedRows) do
         row.applyBox:setSelected(false, false)
     end
-    statusView:setText((_("Applied %d line(s).")):format(#renames))
+    statusView:setText((_("Applied %d line(s).")):format(#renames), false)
 end
 
 function linesTab.build(newState, newSend)
@@ -209,8 +214,8 @@ function linesTab.build(newState, newSend)
     scrollArea:setMaximumSize(api.gui.util.Size.new(860, 380))
     outer:addItem(scrollArea)
 
-    previewButton:onClick(startScan)
-    applyButton:onClick(applyChecked)
+    previewButton:onClick(log.wrap("lines_tab.previewAll", startScan))
+    applyButton:onClick(log.wrap("lines_tab.applyChecked", applyChecked))
 
     local component = api.gui.comp.Component.new("alnpLinesTab")
     component:setLayout(outer)
@@ -221,18 +226,25 @@ local function applyRefresh()
     local tbl = state.settings
     for __, row in ipairs(rows) do
         local currentName = facts.name(row.id)
-        row.currentView:setText(currentName)
+        row.currentView:setText(currentName, false)
         local lock = tracker.lockState(state.records[row.id], currentName, tbl)
         row.lock = lock
-        row.lockBox:setText(lockLabelFor(lock))
+        row.lockBox:setText(lockLabelFor(lock), false)
         row.lockBox:setSelected(lock ~= nil, false)
-        -- The proposal was computed against a name (and an unlocked state) that no longer holds,
-        -- so this row is stale: it is untickable until the player previews again. Staleness never
-        -- clears on its own -- a name that changed back is still a name the mod did not propose for.
-        if not row.stale and (currentName ~= row.nameAtPreview or lock ~= nil) then
+        local nameChanged = currentName ~= row.nameAtPreview
+        -- A changed name invalidates the proposal for good, so this row is stale: it is
+        -- untickable until the player previews again. Staleness never clears on its own -- a
+        -- name that changed back is still a name the mod did not propose for. A lock with the
+        -- name unchanged is different: the proposal against nameAtPreview is still valid, and the
+        -- engine's apply handler accepts it if the player re-ticks the row on purpose (see the
+        -- task brief) -- so it is unticked only once, and never shown as "name changed".
+        if not row.stale and nameChanged then
             row.stale = true
             row.applyBox:setSelected(false, false)
-            row.proposedView:setText(_("(name changed: preview again)"))
+            row.proposedView:setText(_("(name changed: preview again)"), false)
+        elseif not row.stale and not row.lockNoticed and lock ~= nil then
+            row.lockNoticed = true
+            row.applyBox:setSelected(false, false)
         end
     end
 end
@@ -274,13 +286,13 @@ function linesTab.update()
         if f then addRow(id, f, tbl) end
     end
     if scanIndex > scanTotal then
-        statusView:setText(scanDoneStatus(scanTotal, scanChanged))
+        statusView:setText(scanDoneStatus(scanTotal, scanChanged), false)
         scanIds = nil
         scanTaken = nil
         scanWords = nil
         scanDecideView = nil
     else
-        statusView:setText(scanningStatus(scanIndex - 1, scanTotal))
+        statusView:setText(scanningStatus(scanIndex - 1, scanTotal), false)
     end
 end
 
