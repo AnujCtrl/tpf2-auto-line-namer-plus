@@ -46,6 +46,32 @@ function t.case02_scan_visits_linesPerTick_per_tick_and_all_lines_within_three_t
     if not ok then error(err, 0) end
 end
 
+-- With fewer lines than linesPerTick (the normal case early in a game), a tick must still
+-- visit each line at most once, not wrap around and revisit it within the same tick.
+function t.case02b_scan_visits_each_line_at_most_once_per_tick_when_fewer_than_linesPerTick()
+    local lines = {}
+    for i = 1, 3 do lines[i] = H.busLine("Line " .. i) end
+    local world = H.world(lines)
+    H.installCmd(world)
+    local engine = H.freshEngine(H.saved({})) -- default scan.linesPerTick = 5
+
+    local facts = require("anujctrl/alnp/facts")
+    local orig = facts.signature
+    local perLine = {}
+    facts.signature = function(id)
+        perLine[id] = (perLine[id] or 0) + 1
+        return orig(id)
+    end
+    local ok, err = pcall(function()
+        engine.tick(100)
+        eq(perLine[1], 1)
+        eq(perLine[2], 1)
+        eq(perLine[3], 1)
+    end)
+    facts.signature = orig
+    if not ok then error(err, 0) end
+end
+
 function t.case03_hand_named_line_is_never_renamed_and_becomes_edited_locked()
     local world = H.world({ [1] = H.busLine("My favourite line") })
     local sent = H.installCmd(world)
@@ -96,11 +122,19 @@ function t.case13_one_stop_line_is_never_renamed_or_blanked()
     local facts = require("anujctrl/alnp/facts")
     eq(facts.name(1), "Line 1")
     local saved = engine.save()
-    local record = saved.records[1]
-    if record then
-        eq(record.lastAssigned, nil)
-        eq(record.number, nil)
-    end
+    eq(saved.records[1], nil)
+end
+
+-- A reload request ("r") on a one-stop line: minStops still declines it, so nothing is sent
+-- and no empty record is left behind either.
+function t.case13b_reload_request_on_one_stop_line_is_ignored()
+    local world = H.world({ [1] = H.busLine("r", { 11 }) })
+    local sent = H.installCmd(world)
+    local engine = H.freshEngine(nil)
+    H.tickRange(engine, 100, 140)
+    eq(#sent, 0)
+    local saved = engine.save()
+    eq(saved.records[1], nil)
 end
 
 function t.case07_bus_autoRename_disabled_leaves_default_named_line_alone()

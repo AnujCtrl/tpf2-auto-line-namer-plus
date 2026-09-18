@@ -63,6 +63,33 @@ function t.case16_set_validates_and_valid_change_triggers_rerename()
     eq(sent[2].name, "Bus Local")
 end
 
+-- A bad "set" event (missing or non-string path) must not raise, and must leave settings alone.
+function t.case16b_set_with_bad_path_does_not_raise()
+    local world = H.world({ [1] = H.busLine("Line 1") })
+    H.installCmd(world)
+    local engine, logs = H.freshEngine(H.saved({}))
+    local settings = require("anujctrl/alnp/settings")
+    local expected = settings.defaults()
+
+    engine.handleEvent("set", {})
+    local rejected1 = false
+    for __, line in ipairs(logs) do
+        if line:find("setting rejected", 1, true) then rejected1 = true end
+    end
+    eq(rejected1, true)
+    eq(engine.save().settings, expected)
+
+    -- Same message as above, so log.error's consecutive-duplicate dedup swallows a second line;
+    -- what matters here is that this call does not raise and settings stay untouched.
+    engine.handleEvent("set", { path = 42, value = 1 })
+    local rejected2 = false
+    for __, line in ipairs(logs) do
+        if line:find("setting rejected", 1, true) then rejected2 = true end
+    end
+    eq(rejected2, true)
+    eq(engine.save().settings, expected)
+end
+
 function t.case17_preset_resetSection_resetAll_change_settings_and_resetAll_keeps_records()
     local world = H.world({ [1] = H.busLine("Line 1") })
     H.installCmd(world)
@@ -109,8 +136,13 @@ function t.case19_version_increases_on_event_and_rename_not_on_idle_tick()
     engine.tick(os.time() + 1) -- settles and renames line 1
     local v2 = engine.save().version
     eq(v2 > v1, true)
+    -- The rename itself changes the signature (the name changed), and a line is now visited at
+    -- most once per tick, so the reconfirm (same name, no new command) lands on the next tick.
+    engine.tick(os.time() + 2)
+    local v3 = engine.save().version
+    eq(v3 > v2, true)
     engine.tick(os.time() + 5) -- nothing left to change: idle
-    eq(engine.save().version, v2)
+    eq(engine.save().version, v3)
 end
 
 function t.case20_apiCheck_logs_one_line_per_entry_and_unknown_event_errors()

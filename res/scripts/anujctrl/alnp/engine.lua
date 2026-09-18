@@ -70,9 +70,10 @@ end
 -- Give the line the name propose.name says it should have. The record is updated even when the
 -- name is already right, because from now on the mod owns that name.
 local function rename(lineId, lineFacts)
-    local record = recordFor(lineId)
-    local name, n, key = propose.name(lineFacts, record, state.settings, propose.takenByKey(state.records, lineId))
+    local existing = state.records[lineId]
+    local name, n, key = propose.name(lineFacts, existing, state.settings, propose.takenByKey(state.records, lineId))
     if not name then return end
+    local record = recordFor(lineId)
     record.lastAssigned, record.number, record.numberKey = name, n, key
     if record.locked == "edited" then record.locked = nil end
     touch()
@@ -127,12 +128,15 @@ end
 function engine.tick(now)
     if not state then engine.load(nil) end
     if not state.settings.enabled then return end
+    local visits = 0
     for __ = 1, state.settings.scan.linesPerTick do
         if cursor >= #queue then
             refillQueue()
             if #queue == 0 then return end
         end
+        if visits >= #queue then return end
         cursor = cursor + 1
+        visits = visits + 1
         visit(queue[cursor], now)
     end
 end
@@ -140,6 +144,7 @@ end
 local handlers = {}
 
 function handlers.set(param, now)
+    if type(param.path) ~= "string" then return log.error("setting rejected: no path") end
     local ok, err = settings.set(state.settings, param.path, param.value)
     if not ok then return log.error("setting rejected: " .. tostring(err)) end
     if param.path == "log.level" then log.setLevel(param.value) end

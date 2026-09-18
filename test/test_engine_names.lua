@@ -37,10 +37,14 @@ function t.case11_freed_number_is_reused_by_a_new_line()
     local sent = H.installCmd(world)
     local engine = H.freshEngine(nil)
     H.tickRange(engine, 100, 112)
-    eq(sent[1], { id = 2, name = "Bus Springfield – Shelbyville" })
-    eq(sent[2], { id = 1, name = "Bus Springfield – Shelbyville 2" })
-    eq(engine.save().records[2].number, 1)
-    world.removeLine(2)
+    -- Both lines share a route, so one gets the base name and the other a suffix; which of the
+    -- two setName commands lands first in `sent` is scan order, not a guarantee, so compare the
+    -- set of {id, name} pairs sent instead of sent[1]/sent[2] positionally.
+    local byId = { [sent[1].id] = sent[1].name, [sent[2].id] = sent[2].name }
+    eq(byId, { [1] = "Bus Springfield – Shelbyville", [2] = "Bus Springfield – Shelbyville 2" })
+    eq(engine.save().records[1].number, 1)
+    eq(engine.save().records[2].number, 2)
+    world.removeLine(1)
     world.setStops(3, { 11, 12 })
     H.tickRange(engine, 113, 125)
     eq(sent[3], { id = 3, name = "Bus Springfield – Shelbyville" })
