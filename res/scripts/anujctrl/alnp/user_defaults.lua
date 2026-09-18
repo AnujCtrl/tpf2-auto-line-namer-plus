@@ -1,0 +1,22 @@
+-- Overrides for the built-in schema defaults (settings.lua), applied only to a brand-new save --
+-- one that has never had this mod's settings saved into it before. Editing an existing save's
+-- settings is done from the in-game window instead; this file never touches a save already in
+-- progress.
+--
+-- Paths mirror the dotted settings paths used everywhere else (settings.get/settings.set), so a
+-- setting here is written the same way it would show up in a saved game, for example:
+--
+--   patterns = { default = "{type} {towns:3}[ {n}]" },
+--   scan = { linesPerTick = 10 },
+--   defaults = { extraPrefixes = "Linie" },
+--
+-- A value that does not match its schema row (wrong type, out of range, not one of an enum's
+-- choices) is silently ignored and the shipped default is used instead -- see settings.merge().
+--
+-- install.sh overwrites the copy of this file inside the installed mod folder every time it
+-- runs, so edit the copy in this repository, not the one under Steam's local mods directory.
+return {
+    -- patterns = { default = "{type} {towns:3}[ {n}]" },
+    -- scan = { linesPerTick = 10 },
+    -- defaults = { extraPrefixes = "Linie" },
+}

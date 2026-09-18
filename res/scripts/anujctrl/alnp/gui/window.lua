@@ -1,0 +1,108 @@
+-- The window shell: the top-bar button, the window itself, its four tabs and the shared help
+-- panel docked at the bottom. Owns no naming logic: every tab's content comes from its own
+-- builder module. GUI-only module: may call api.gui.
+local log = require "anujctrl/alnp/log"
+local settings = require "anujctrl/alnp/settings"
+local help = require "anujctrl/alnp/gui/help"
+local help_topics = require "anujctrl/alnp/help_topics"
+local schemaForm = require "anujctrl/alnp/gui/schema_form"
+local patternsTab = require "anujctrl/alnp/gui/patterns_tab"
+local linesTab = require "anujctrl/alnp/gui/lines_tab"
+
+local window = {}
+
+-- The most recently delivered state (window.setState), or nil until load() has reached the GUI
+-- thread at least once. May already be non-nil when window.init runs, if load() got here first.
+local state = nil
+local windowComponent = nil
+local lastRefreshedVersion = nil
+
+local function defaultState()
+    return { settings = settings.defaults(), records = {}, version = -1 }
+end
+
+-- Guards against a nil gameInfo bar or a nil layout on it, exactly as upstream did, since the
+-- game hands this component out and a failure here must not take the whole window build down.
+local function addTopBarButton(toggleWindow)
+    local gameInfo = api.gui.util.getById("gameInfo")
+    if not gameInfo then
+        return log.error("gameInfo component is nil.")
+    end
+    gameInfo:invokeLater(function()
+        local layout = gameInfo:getLayout()
+        if not layout then
+            return log.error("gameInfo layout is nil.")
+        end
+        local button = api.gui.comp.Button.new(api.gui.comp.TextView.new("[ALN+]"), true)
+        button:onClick(toggleWindow)
+        button:setTooltip(_(help_topics.get("topbar.button").text))
+        layout:addItem(api.gui.comp.Component.new("VerticalLine"))
+        layout:addItem(button)
+        layout:addItem(api.gui.comp.Component.new("VerticalLine"))
+    end)
+end
+
+-- The proven idiom (upstream auto_line_namer_gui.lua) passes a plain TextView as a tab's label;
+-- the tab's own info button goes inside its content instead, as the first item, rather than
+-- risking a compound help.labelled() component where the game may expect a simple label widget.
+local function buildTab(tabWidget, topicKey, labelText, tabContent)
+    local label = api.gui.comp.TextView.new(_(labelText))
+    local layout = api.gui.layout.BoxLayout.new("VERTICAL")
+    layout:addItem(help.button(topicKey))
+    layout:addItem(tabContent)
+    local wrapper = api.gui.comp.Component.new("alnpTabWrap:" .. topicKey)
+    wrapper:setLayout(layout)
+    tabWidget:addTab(label, wrapper)
+end
+
+function window.setState(newState)
+    state = newState
+end
+
+function window.init(send)
+    help.reset()
+    schemaForm.reset()
+    patternsTab.reset()
+    linesTab.reset()
+
+    local buildState = state or defaultState()
+    state = buildState
+
+    local rootLayout = api.gui.layout.BoxLayout.new("VERTICAL")
+    rootLayout:addItem(help.labelled(_("How this works"), "window.overview"))
+
+    local tabWidget = api.gui.comp.TabWidget.new("NORTH")
+    buildTab(tabWidget, "tab.general", "General", schemaForm.build("general", buildState, send))
+    buildTab(tabWidget, "tab.advanced", "Advanced", schemaForm.build("advanced", buildState, send))
+    buildTab(tabWidget, "tab.patterns", "Patterns", patternsTab.build(buildState, send))
+    buildTab(tabWidget, "tab.lines", "Lines", linesTab.build(buildState, send))
+    rootLayout:addItem(tabWidget)
+
+    rootLayout:addItem(help.panel())
+
+    local content = api.gui.comp.Component.new("alnpWindowContent")
+    content:setLayout(rootLayout)
+
+    windowComponent = api.gui.comp.Window.new(_("Auto Line Namer Plus"), content)
+    windowComponent:addHideOnCloseHandler()
+    windowComponent:setVisible(false, false)
+    lastRefreshedVersion = buildState.version
+
+    addTopBarButton(function()
+        windowComponent:setVisible(not windowComponent:isVisible(), false)
+    end)
+end
+
+-- Cheap when the window is hidden: linesTab.update() returns immediately when no scan is running,
+-- and nothing else runs at all.
+function window.update()
+    linesTab.update()
+    if not (windowComponent and windowComponent:isVisible()) then return end
+    if not state or state.version == lastRefreshedVersion then return end
+    lastRefreshedVersion = state.version
+    schemaForm.refresh(state)
+    patternsTab.refresh(state)
+    linesTab.refresh(state)
+end
+
+return window
