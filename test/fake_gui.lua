@@ -117,6 +117,11 @@ end
 -- Widget behaviour
 -- ---------------------------------------------------------------------------------------------
 
+-- Forward-declared: a couple of STRUCTURAL entries below (getMainRendererComponent,
+-- getCameraController) need to build a widget of a different class than the one they were
+-- called on, before newWidget itself is defined further down.
+local newWidget
+
 -- Structural calls: recorded into widget.children so fakeGui.find/findAll/allText can traverse
 -- into whatever a builder attached, however it attached it.
 local STRUCTURAL = {
@@ -191,6 +196,24 @@ local STRUCTURAL = {
     setTooltip = function(self, args)
         self.tooltip = args[1]
     end,
+    -- comp.Component:getContentRect() -- any widget, not just GameUI's renderer.
+    getContentRect = function(self)
+        return { x = 0, y = 0, w = 0, h = 0 }
+    end,
+    -- comp.GameUI:getMainRendererComponent() -- one RendererComponent per GameUI, built with
+    -- newWidget (bypassing the public "new" gate: the game hands this out, a mod never builds
+    -- one itself).
+    getMainRendererComponent = function(self)
+        -- rawget: see the note on GET_FIELD below -- a field read must not be mistaken for a
+        -- method call just because it has never been set yet.
+        self.rendererRef = rawget(self, "rendererRef") or newWidget("comp.RendererComponent", {})
+        return self.rendererRef
+    end,
+    -- comp.RendererComponent:getCameraController() -- same reasoning as above.
+    getCameraController = function(self)
+        self.cameraRef = rawget(self, "cameraRef") or newWidget("util.CameraController", {})
+        return self.cameraRef
+    end,
 }
 
 -- Simple get/set state. setSelected doubles as ComboBox's "current index" (getCurrentIndex reads
@@ -257,7 +280,7 @@ WIDGET_MT.__index = function(widget, key)
     end
 end
 
-local function newWidget(className, args)
+newWidget = function(className, args)
     local widget = {
         class = className,
         args = args,
@@ -286,28 +309,47 @@ local function namespaceTable(prefix)
     })
 end
 
+-- A class is publicly constructible only if "new" is allowed on THAT class's own entry -- never
+-- inherited from a base class (an abstract base documenting a constructor says nothing about its
+-- subclasses, and vice versa: comp.Slider documents :new even though its base comp.AbstractSlider
+-- does not). classes[name].methods holds only that class's own (doc- or PROVEN-) methods, never
+-- an ancestor's, so this check needs no separate bookkeeping.
+local function ctorFor(className)
+    return function(...)
+        local info = classes[className]
+        if not (info and info.methods["new"]) then
+            error(className .. " has no method 'new'", 2)
+        end
+        return newWidget(className, { ... })
+    end
+end
+
 local function installGui()
     local compNs = namespaceTable("comp")
     local layoutNs = namespaceTable("layout")
 
+    -- Every documented class gets an entry (so api.gui.comp.GameUI itself is a real table, not
+    -- an "unknown class" error) even when it has no public constructor: calling .new on one
+    -- raises the same style of error as calling any other undocumented method.
     for className in pairs(classes) do
         local ns, name = className:match("^(%a+)%.([%w]+)$")
-        local function ctor(...)
-            return newWidget(className, { ... })
-        end
         if ns == "comp" then
-            compNs[name] = { new = ctor }
+            compNs[name] = { new = ctorFor(className) }
         elseif ns == "layout" then
-            layoutNs[name] = { new = ctor }
+            layoutNs[name] = { new = ctorFor(className) }
         end
     end
 
     local byId = {}
+    -- The GameUI is a singleton the game hands out, not something a mod constructs itself: build
+    -- it (and the RendererComponent/CameraController it leads to) directly with newWidget, which
+    -- bypasses the public "new" gate above -- exactly like getById's comp.Component.
+    local gameUI = nil
     api.gui = {
         comp = compNs,
         layout = layoutNs,
         util = {
-            Size = { new = function(...) return newWidget("util.Size", { ... }) end },
+            Size = { new = ctorFor("util.Size") },
             getById = function(id)
                 if not byId[id] then
                     local component = newWidget("comp.Component", { id })
@@ -317,6 +359,13 @@ local function installGui()
                     byId[id] = component
                 end
                 return byId[id]
+            end,
+            getGameUI = function()
+                gameUI = gameUI or newWidget("comp.GameUI", {})
+                return gameUI
+            end,
+            getMouseScreenPos = function()
+                return { x = 0, y = 0 }
             end,
         },
     }
@@ -328,8 +377,13 @@ fake.addReset(installGui)
 -- Part A: test helpers
 -- ---------------------------------------------------------------------------------------------
 
+-- comp.ComboBox:addItem takes a plain string (its documented, and PROVEN, item), not a widget --
+-- unlike every other addItem in the two proven files -- so a ComboBox's own children can contain
+-- bare strings alongside widgets. Every tree walker below treats a non-table child as a leaf: it
+-- is never handed to a predicate (which expects a widget), and it is never recursed into.
+
 function fakeGui.find(root, predicate)
-    if root == nil then return nil end
+    if type(root) ~= "table" then return nil end
     if predicate(root) then return root end
     for __, child in ipairs(root.children or {}) do
         local found = fakeGui.find(child, predicate)
@@ -341,6 +395,7 @@ end
 function fakeGui.findAll(root, predicate)
     local out = {}
     local function walk(node)
+        if type(node) ~= "table" then return end
         if predicate(node) then out[#out + 1] = node end
         for __, child in ipairs(node.children or {}) do walk(child) end
     end
@@ -349,6 +404,9 @@ function fakeGui.findAll(root, predicate)
 end
 
 function fakeGui.text(widget)
+    if type(widget) ~= "table" then
+        return type(widget) == "string" and widget or nil
+    end
     -- rawget: "text" is only set once setText has actually been called, and reading it before
     -- then must return nil quietly rather than being mistaken for an unmodelled method call.
     local text = rawget(widget, "text")
@@ -366,8 +424,9 @@ end
 function fakeGui.allText(root)
     local parts = {}
     local function walk(node)
-        local t = fakeGui.text(node)
+        local t = fakeGui.text(node) -- handles a bare string leaf (a ComboBox item) too
         if t then parts[#parts + 1] = t end
+        if type(node) ~= "table" then return end -- a leaf, such as a ComboBox item: nothing to recurse into
         for __, child in ipairs(node.children or {}) do walk(child) end
     end
     if root then walk(root) end

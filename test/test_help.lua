@@ -40,6 +40,30 @@ function t.fake_unknown_class_raises()
     assert(not ok, "Frobnicator is not a documented class")
 end
 
+-- A class is documented (it has a heading in the API docs) but that does not mean it documents
+-- its own :new -- an abstract base or a class the game hands out itself, never built by a mod.
+-- new must not be inherited from a base class either way.
+function t.fake_new_is_not_inherited_and_not_assumed()
+    local noConstructor = {
+        "comp.AbstractSlider", "comp.ContentView", "comp.GameUI",
+        "comp.ILayoutItem", "comp.RendererComponent",
+        "layout.ILayout", "layout.LayoutBase",
+    }
+    for __, className in ipairs(noConstructor) do
+        local ns, name = className:match("^(%a+)%.(%a[%w]*)$")
+        local ok, err = pcall(function() return api.gui[ns][name].new() end)
+        assert(not ok, className .. ".new should not be constructible")
+        assert(tostring(err):find(className, 1, true), err)
+        assert(tostring(err):find("no method 'new'", 1, true), err)
+    end
+
+    -- Classes that DO document their own constructor must still work, including one (Slider)
+    -- whose base (AbstractSlider) does not document a constructor at all.
+    assert(api.gui.comp.Button.new(api.gui.comp.TextView.new("i"), true))
+    assert(api.gui.layout.BoxLayout.new("VERTICAL"))
+    assert(api.gui.comp.Slider.new())
+end
+
 function t.fake_inherited_method_works()
     -- setTooltip is documented on comp.Component, an ancestor of comp.Button.
     local button = api.gui.comp.Button.new(api.gui.comp.TextView.new("i"), true)
@@ -89,6 +113,39 @@ function t.fake_find_and_allText_see_nested_structure()
     end
 end
 
+-- comp.ComboBox:addItem takes a plain string, so a widget's children can hold bare strings
+-- alongside widgets (unlike every other addItem in the two proven files). allText must still see
+-- them, and find/findAll must treat them as leaves rather than handing them to a predicate.
+function t.fake_allText_and_find_handle_a_combobox_with_string_items()
+    local root = api.gui.comp.Component.new("root")
+    local layout = api.gui.layout.BoxLayout.new("VERTICAL")
+    root:setLayout(layout)
+
+    local combo = api.gui.comp.ComboBox.new()
+    combo:addItem("First choice")
+    combo:addItem("Second choice")
+    layout:addItem(combo)
+
+    local text = fakeGui.allText(root)
+    assert(text:find("First choice", 1, true), text)
+    assert(text:find("Second choice", 1, true), text)
+
+    local everyPredicateArgWasATable = true
+    local found = fakeGui.find(root, function(w)
+        if type(w) ~= "table" then everyPredicateArgWasATable = false end
+        return false
+    end)
+    assert(found == nil)
+    assert(everyPredicateArgWasATable, "find must never hand a string to the predicate")
+
+    local all = fakeGui.findAll(root, function(w)
+        if type(w) ~= "table" then everyPredicateArgWasATable = false end
+        return w.class == "comp.ComboBox"
+    end)
+    assert(#all == 1)
+    assert(everyPredicateArgWasATable, "findAll must never hand a string to the predicate")
+end
+
 -- 3. fake: every api.gui.<ns>.<Class>.new and every :method( call in the two proven sources. -----
 
 function t.fake_accepts_every_call_in_the_two_proven_source_files()
@@ -135,6 +192,13 @@ function t.fake_accepts_every_call_in_the_two_proven_source_files()
         for method in cleaned:gmatch(":([%a_][%w_]*)%(") do
             assert(anyClassAllows[method], "no documented or PROVEN class allows method '" .. method .. "'")
         end
+
+        -- Bare util functions, e.g. api.gui.util.getMouseScreenPos( -- not a :method( call (no
+        -- receiver) and not a .new( class construction, so neither loop above would see it.
+        for name in cleaned:gmatch("api%.gui%.util%.([%a][%w]*)%(") do
+            assert(type(api.gui.util[name]) == "function",
+                "api.gui.util." .. name .. " should be a callable function")
+        end
     end
 end
 
@@ -157,6 +221,30 @@ function t.fake_proven_entries_work_on_their_actual_classes()
     combo:setSelected(0, false)
     eq(combo:getCurrentIndex(), 0)
     combo:removeItem(0)
+end
+
+-- Extra: the util functions used unconditionally by the proven bus tool file (getGameUI's whole
+-- chain down to a camera, and getMouseScreenPos) actually work, not just "exist as a function".
+function t.fake_models_getGameUI_chain_and_getMouseScreenPos()
+    local pos = api.gui.util.getMouseScreenPos()
+    eq(type(pos.x), "number")
+    eq(type(pos.y), "number")
+
+    local gameUI = api.gui.util.getGameUI()
+    eq(gameUI.class, "comp.GameUI")
+    assert(api.gui.util.getGameUI() == gameUI, "getGameUI should return the same singleton")
+
+    local renderer = gameUI:getMainRendererComponent()
+    eq(renderer.class, "comp.RendererComponent")
+    assert(gameUI:getMainRendererComponent() == renderer, "one renderer per GameUI")
+
+    local rect = renderer:getContentRect()
+    eq(type(rect.x), "number")
+    eq(type(rect.w), "number")
+
+    local camera = renderer:getCameraController()
+    eq(camera.class, "util.CameraController")
+    camera:focus("someEntity") -- must not raise
 end
 
 -- 4. topics: coverage, uniqueness, non-empty, line length, get("nope"). --------------------------
