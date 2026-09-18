@@ -1,7 +1,7 @@
 # Auto Line Namer Plus — design
 
 Date: 2026-09-18
-Status: awaiting review
+Status: approved 2026-09-18
 Upstream: https://github.com/erkanercan/TPF2-AutoLineNamer (v0.2.0, MIT, commit `748b16c`)
 
 ## 1. Goal
@@ -46,7 +46,7 @@ settings as text.
   `plus-rebuild`.
 - Mod name "Auto Line Namer Plus". Installed folder `auto_line_namer_plus_1`.
 - `mod.lua` authors: `AnujCtrl` as `CREATOR`, `erkanercan` as `BASED_ON`, with the description
-  crediting him as the original author. The probe in §13 confirms the game accepts that role.
+  crediting him as the original author. The API check in §13 confirms the game accepts that role.
 - `LICENSE` keeps "Copyright (c) 2025 Erkan Ercan" and adds "Copyright (c) 2026 AnujCtrl".
 - `workshop_fileid.txt` (upstream's Workshop id `3360333659`) is deleted so the in-game publisher
   can never target upstream's item. `readme.bbcode`, the preview images and `.github/` are
@@ -65,7 +65,9 @@ Only `facts.lua` reads the game. Everything downstream works on plain tables.
 | Module | Responsibility | Game API |
 |---|---|---|
 | `facts.lua` | `facts.forLine(lineId)` → plain table (§5.1). `facts.signature(lineId)` → cheap change signature. `facts.playerLines()` → ids | yes — the only one |
+| `kinds.lua` | the list of line kinds, which of them are cargo kinds, and the scopes | no |
 | `classify.lua` | facts → `kind` and `scope` (§5.2) | no |
+| `propose.lua` | facts + record + settings → proposed name and number; shared by the engine and the Lines tab so both always agree | no |
 | `naming.lua` | `render(pattern, facts, settings)` → string. `number(base, takenNames, settings)` | no |
 | `tracker.lua` | per-line record and `decide(record, name, signature, settings)` → action (§6) | no |
 | `settings.lua` | schema, defaults, `merge`, validated `set(path, value)` (§9) | no |
@@ -95,6 +97,7 @@ mutates settings locally.
   cargos = { "Passengers" },         -- distinct, in first-seen order
   carriesPassengers = true,
   carriesCargo = false,
+  towns = { "Springfield", "Shelbyville" },  -- distinct, order of first appearance
   stops = {                          -- distinct stops, order of first appearance
     { stationGroup = 101, stop = "Springfield Central", town = "Springfield", industry = nil },
     { stationGroup = 205, stop = "Shelbyville East",    town = "Shelbyville", industry = nil },
@@ -204,7 +207,8 @@ One schema table in `settings.lua` is the single source of truth. Each row:
 
 ```lua
 { path = "scan.linesPerTick", type = "int", min = 1, max = 50, default = 5,
-  section = "performance", label = "set_scan_lines_per_tick", help = "help_scan_lines_per_tick" }
+  section = "performance", label = "Lines checked per tick",
+  help = "How many lines the mod looks at on each game tick.\nHigher reacts faster; lower costs less per frame." }
 ```
 
 Types: `bool`, `int`, `number`, `string`, `enum` (with `values`). Defaults are derived from the
@@ -292,9 +296,13 @@ Implementation:
 - `help_topics.lua` is a plain table listing every topic key. Settings rows contribute their
   topics automatically: schema rows carry a required `help` string key (§9), and
   `gui/schema_form.lua` places an info button on every row and section heading it generates.
-- Help text lives in `strings.lua` under `help_*` keys. It is written in English with explicit
-  line breaks at about 70 characters, so it does not depend on the game wrapping text. Other
-  languages fall back to English until translated.
+- All UI text, help included, follows the game's usual idiom: the code says `_("English text")`
+  and `strings.lua` holds translations only, keyed by the English text. English therefore needs
+  no entry, no two modules share a strings file while being written, and other languages fall
+  back to English until translated. Upstream's German, Russian and Turkish entries are re-keyed
+  for the strings that survive (mod name and description); its symbolic keys are removed.
+- Help text is written with explicit line breaks at about 70 characters, so it does not depend
+  on the game wrapping text.
 - Help text for a settings row is assembled from the schema: the authored explanation plus a
   generated "Default: … Range: …" line, so the documented default can never disagree with the
   real one.
@@ -320,9 +328,8 @@ Host: `lua5.4 test/run.lua` with `test/fake_api.lua`, the same shape as Bus Line
 - `facts`: against the fake API, including a vanished line and a stop with no town.
 - lint: the translation function `_` is never shadowed (ported from Bus Line Tool Plus).
 - help coverage, so "every surface has help" is enforced rather than remembered:
-  - every schema row and every section has `label` and `help` keys, and both resolve to a
-    non-empty English string in `strings.lua`;
-  - every key in `help_topics.lua` resolves to a non-empty English string;
+  - every schema row and every section has a non-empty `label` and `help`;
+  - every topic in `help_topics.lua` has a non-empty title and text;
   - a static scan of `gui/*.lua` finds every `help.button("<key>")` call and checks the key is in
     `help_topics.lua`, and that every topic key is used by at least one call or schema row;
   - the same scan fails if a GUI file creates a tab, a table header or a button without a
@@ -337,13 +344,15 @@ button shows its tooltip on hover and fills the help panel on click, with no tex
 ## 13. Risks
 
 1. **Industry lookup.** Expected: `game.interface.getEntities({pos, radius}, {type="SIM_BUILDING"})`.
-   Not confirmed by the bundled API docs. The first implementation task is an in-game probe that
-   logs the result for one cargo stop. If it fails, the industry tokens use `industry.fallback`
-   and nothing else changes.
-2. **Translated default name.** The probe also logs the game's translation of "Line".
+   Not confirmed by the bundled API docs. The lookup is wrapped so a failure only means the
+   industry tokens use `industry.fallback`. A "Run API check" button on the Advanced tab logs
+   what the lookup returns for every cargo stop, the translated word for "Line", and the mod's
+   author roles, so all three assumptions in this section are checked on first launch without a
+   separate probe build.
+2. **Translated default name.** The API check logs the game's translation of "Line".
    `defaults.extraPrefixes` covers any language by configuration either way.
 3. **Author role.** `BASED_ON` is the accurate role for the original author. If the game rejects
-   it when the probe build loads, use `CO_CREATOR`.
+   it (the mod list shows no author, or the API check logs an error), use `CO_CREATOR`.
 4. **Restart needed.** A new local mod appears in the mod list only after the game restarts.
 
 ## 14. Install
