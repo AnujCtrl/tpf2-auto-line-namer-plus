@@ -3,6 +3,7 @@ local settings = require("anujctrl/alnp/settings")
 local help = require("anujctrl/alnp/gui/help")
 local topics = require("anujctrl/alnp/help_topics")
 local facts = require("anujctrl/alnp/facts")
+local propose = require("anujctrl/alnp/propose")
 local fakeGame = require("fake_game")
 local fakeGui = require("fake_gui")
 local eq = require("fake_api").eq
@@ -285,6 +286,82 @@ function t.two_default_named_lines_on_the_same_route_get_different_numbers()
     assert(name1 ~= nil and name2 ~= nil and name1 ~= name2,
         "expected different proposed names, got " .. tostring(name1) .. " and " .. tostring(name2))
     assert(name2:find(name1, 1, true), "expected the second name to extend the first: " .. tostring(name2))
+end
+
+-- ------------------------------------------------------------------------------------------
+-- 4b (fix round 1, F1). A line with a recorded number keeps it across a preview: it is not
+-- bumped past its own number, and an unnumbered line scanned before it must not steal it.
+-- Both lines share the Springfield <-> Shelbyville route (lines 1 and 2 from buildWorld()).
+-- The numberKey is taken from a real propose.name() call rather than hand-written, so the test
+-- cannot silently drift from how lines_tab.lua itself computes it.
+-- ------------------------------------------------------------------------------------------
+local function renamesByLine(calls)
+    assert(#calls == 1 and calls[1].name == "apply", "expected exactly one apply event")
+    local byLine = {}
+    for __, rename in ipairs(calls[1].param.renames) do
+        byLine[rename.line] = rename
+    end
+    return byLine
+end
+
+local function tickAndApply(component, table_, lineIndex1, lineIndex2)
+    table_.rows[lineIndex1][1]:setSelected(true, false)
+    table_.rows[lineIndex2][1]:setSelected(true, false)
+    clickLabelled(component, "Apply checked")
+end
+
+function t.a_numbered_line_keeps_its_own_number_when_scanned_first()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local tbl = settings.defaults()
+    facts.clearCache()
+    local ownFacts = facts.forLine(1, tbl)
+    local __, __, key = propose.name(ownFacts, nil, tbl, {})
+    assert(key ~= nil, "expected the default pattern to use a number token")
+
+    -- Line 1 (scanned first, ascending id order) already owns number 2; line 2 has no record.
+    local records = { [1] = { lastAssigned = "Line 1", number = 2, numberKey = key } }
+    local send, calls = recordingSend()
+    local component = linesTab.build({ settings = tbl, records = records }, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    tickAndApply(component, table_, 1, 2)
+    local byLine = renamesByLine(calls)
+    eq(byLine[1].n, 2, "the line that already owns number 2 must keep it, not be bumped to 3")
+    eq(byLine[2].n, 1, "the other line must get a different (the lowest free) number")
+    assert(byLine[1].name ~= byLine[2].name, "expected two distinct rendered names")
+
+    eq(fakeGui.text(table_.rows[1][4]), byLine[1].name, "row 1's proposed-name text matches the apply payload")
+    eq(fakeGui.text(table_.rows[2][4]), byLine[2].name, "row 2's proposed-name text matches the apply payload")
+end
+
+function t.an_unnumbered_line_scanned_first_does_not_steal_a_number_already_owned()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local tbl = settings.defaults()
+    facts.clearCache()
+    local ownFacts = facts.forLine(2, tbl)
+    local __, __, key = propose.name(ownFacts, nil, tbl, {})
+    assert(key ~= nil, "expected the default pattern to use a number token")
+
+    -- Line 2 (the higher id) owns number 2; line 1 (the lower id, scanned FIRST) has no record.
+    local records = { [2] = { lastAssigned = "Line 2", number = 2, numberKey = key } }
+    local send, calls = recordingSend()
+    local component = linesTab.build({ settings = tbl, records = records }, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    tickAndApply(component, table_, 1, 2)
+    local byLine = renamesByLine(calls)
+    eq(byLine[2].n, 2, "the line scanned second must still keep the number it already owns")
+    eq(byLine[1].n, 1, "the line scanned first must not steal number 2 from the line that owns it")
+    assert(byLine[1].name ~= byLine[2].name, "expected two distinct rendered names")
+
+    eq(fakeGui.text(table_.rows[1][4]), byLine[1].name, "row 1's proposed-name text matches the apply payload")
+    eq(fakeGui.text(table_.rows[2][4]), byLine[2].name, "row 2's proposed-name text matches the apply payload")
 end
 
 -- ------------------------------------------------------------------------------------------
