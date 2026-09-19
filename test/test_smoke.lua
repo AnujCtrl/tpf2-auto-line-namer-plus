@@ -4,7 +4,8 @@
 -- every module's own unit tests pass.
 local fakeGame = require("fake_game")
 local fakeGui = require("fake_gui")
-local eq = require("fake_api").eq
+local fake = require("fake_api")
+local eq = fake.eq
 local facts = require("anujctrl/alnp/facts")
 local engine = require("anujctrl/alnp/engine")
 local log = require("anujctrl/alnp/log")
@@ -122,6 +123,9 @@ function t.whole_session_boots_renames_and_applies_from_the_gui()
     local applyButton = buttonLabelled("Apply checked")
     assert(applyButton, "should find the Apply checked button")
     fakeGui.click(applyButton)
+    -- The apply event only QUEUES the items; engine.tick drains the queue, re-checking each
+    -- item's `from` name as it goes, so nothing is renamed until the next tick.
+    scriptData.update()
 
     assert(facts.name(1) ~= "Line 5", "the manually applied line should have been renamed")
 end
@@ -175,6 +179,7 @@ local function previewThenHandRenameThenApply(autoRename)
     local tableWidget = fakeGui.find(windowWidget, function(w) return w.class == "comp.Table" end)
     local stillTicked = tableWidget.rows[1][1]:isSelected()
     fakeGui.click(buttonLabelled("Apply checked"))
+    scriptData.update() -- the apply queue is drained by the next tick, not by the click
     return facts.name(1), stillTicked
 end
 
@@ -262,6 +267,74 @@ function t.a_real_state_still_reaches_the_engine_and_the_window()
     local scriptData, getWindow = bootWithLoads({ { true }, { saved, false } })
     eq(scriptData.save().settings.enabled, false, "a real state after junk must still be adopted")
     assert(getWindow() ~= nil)
+end
+
+-- 4 (X12). The hostile pass the pre-run audit ran by hand, kept as a test: one widget method is
+-- made to raise at a time, and the mod must still come up. A single bad value may cost a row or
+-- a tab -- never the window, and never the one control that opens it.
+
+-- Wraps className's own "new" (as fakeGui.captureNew does) and rawsets `method` on every instance
+-- it builds, which shadows the fake's strict __index. Returns the restore function.
+local function breakWidgetMethod(className, method)
+    local ns, name = className:match("^(%a+)%.([%w]+)$")
+    local target = api.gui[ns][name]
+    local realNew = target.new
+    target.new = function(...)
+        local widget = realNew(...)
+        widget[method] = function() error("boom: " .. className .. ":" .. method) end
+        return widget
+    end
+    return function() target.new = realNew end
+end
+
+local HOSTILE = {
+    { class = "comp.Table", method = "setHeader" },
+    { class = "comp.Table", method = "addRow" },
+    { class = "comp.ScrollArea", method = "setMaximumSize" },
+    { class = "comp.TabWidget", method = "addTab" },
+    { class = "comp.Window", method = "setResizable" },
+    { class = "comp.Window", method = "setSize" },
+    { class = "comp.CheckBox", method = "setSelected" },
+    { class = "comp.TextInputField", method = "setText" },
+    { class = "comp.ComboBox", method = "addItem" },
+}
+
+function t.one_hostile_widget_method_never_costs_the_window_or_the_button()
+    for __, case in ipairs(HOSTILE) do
+        local label = case.class .. ":" .. case.method
+        fake.reset()
+        log.reset()
+        local logLines = {}
+        log.sink = function(line) logLines[#logLines + 1] = line end
+
+        busWorld()
+        freshGame()
+        dofile(GAME_SCRIPT)
+        local scriptData = data()
+        installCmd({ renameLine = function() end }, scriptData)
+
+        local getWindow = fakeGui.captureNew("comp.Window")
+        local restore = breakWidgetMethod(case.class, case.method)
+
+        local ok, err = pcall(scriptData.guiInit)
+        assert(ok, label .. ": guiInit must not raise: " .. tostring(err))
+
+        local button = fakeGui.find(api.gui.util.getById("gameInfo"), function(w)
+            return w.class == "comp.Button"
+        end)
+        assert(getWindow() or button, label .. ": neither the window nor the button survived")
+        assert(button, label .. ": the top-bar button must survive; log: " .. table.concat(logLines, " | "))
+        if button then fakeGui.click(button) end -- opening it must be safe too
+
+        ok, err = pcall(scriptData.guiUpdate)
+        assert(ok, label .. ": guiUpdate must not raise: " .. tostring(err))
+        ok, err = pcall(scriptData.update)
+        assert(ok, label .. ": update must not raise: " .. tostring(err))
+        ok, err = pcall(scriptData.guiUpdate)
+        assert(ok, label .. ": a second guiUpdate must not raise: " .. tostring(err))
+
+        restore()
+    end
 end
 
 return t

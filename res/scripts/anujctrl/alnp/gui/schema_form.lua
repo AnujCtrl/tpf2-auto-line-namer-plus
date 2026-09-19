@@ -37,7 +37,7 @@ local function commitValue(path, value, send)
 end
 
 local function buildBoolEditor(row, value, send)
-    local checkbox = api.gui.comp.CheckBox.new()
+    local checkbox = api.gui.comp.CheckBox.new("")
     checkbox:setSelected(value, false)
     checkbox:onToggle(log.wrap("schema_form.bool:" .. row.path, function(v)
         commitValue(row.path, v, send)
@@ -49,7 +49,7 @@ local function buildBoolEditor(row, value, send)
 end
 
 local function buildStringEditor(row, value, send)
-    local field = api.gui.comp.TextInputField.new()
+    local field = api.gui.comp.TextInputField.new("")
     field:setText(value, false)
     field:onChange(log.wrap("schema_form.string:" .. row.path, function(text)
         commitValue(row.path, text, send)
@@ -129,7 +129,7 @@ end
 -- value. Marking pending with the raw text (which can never equal the engine's numeric state)
 -- means sync's own timeout is what eventually lets a refresh through instead.
 local function buildFallbackNumberEditor(row, value, send)
-    local field = api.gui.comp.TextInputField.new()
+    local field = api.gui.comp.TextInputField.new("")
     field:setText(tostring(value), false)
     field:onChange(log.wrap("schema_form.numberFallback:" .. row.path, function(text)
         local number = tonumber(text)
@@ -179,6 +179,18 @@ local function buildRow(row, state, send)
     return component
 end
 
+-- Stands in for a row whose editor could not be built, so one unhappy widget costs that setting
+-- rather than the tab it sits in (hardening X6).
+local ROW_FAILED_TEXT = "(could not be shown)"
+
+local function rowOrNotice(row, state, send)
+    local component = log.guard("schema_form.row:" .. row.path, buildRow, row, state, send)
+    if component == nil then
+        component = api.gui.comp.TextView.new(_(row.label) .. " " .. _(ROW_FAILED_TEXT))
+    end
+    return component
+end
+
 local function buildSectionHeading(section, send)
     local layout = api.gui.layout.BoxLayout.new("HORIZONTAL")
     layout:addItem(api.gui.comp.TextView.new(_(section.label)))
@@ -219,7 +231,7 @@ function schemaForm.build(tabKey, state, send)
         if section.tab == tabKey then
             rootLayout:addItem(buildSectionHeading(section, send))
             for __, row in ipairs(settings.rowsIn(section.key)) do
-                rootLayout:addItem(buildRow(row, state, send))
+                rootLayout:addItem(rowOrNotice(row, state, send))
             end
         end
     end
@@ -247,14 +259,20 @@ end
 -- Walks every editor built so far (either tab) and, where the player has no pending edit still in
 -- flight and the widget disagrees with the given state, writes the state value with the "do not
 -- emit" flag so a refresh never echoes back to the engine.
+--
+-- Each path's body is guarded on its own (hardening X6): the Slider's getValue/setValue are the
+-- one accessor pair nothing in the game proves, and an editor that raises must cost its own row,
+-- not every row that happens to come after it in the (unordered) walk.
 function schemaForm.refresh(state)
     for path, accessors in pairs(editorsByPath) do
-        local stateValue = settings.get(state.settings, path)
-        if syncInstance:shouldApply(path, stateValue) then
-            if accessors.get() ~= stateValue then
-                accessors.set(stateValue)
+        log.guard("schema_form.refresh:" .. path, function()
+            local stateValue = settings.get(state.settings, path)
+            if syncInstance:shouldApply(path, stateValue) then
+                if accessors.get() ~= stateValue then
+                    accessors.set(stateValue)
+                end
             end
-        end
+        end)
     end
 end
 

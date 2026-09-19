@@ -1,7 +1,9 @@
 -- Tests for gui/window.lua: the window shell, the top-bar button, the four tabs and their info
 -- buttons, and update()'s refresh-on-version-change behaviour.
 local fakeGui = require("fake_gui")
-local eq = require("fake_api").eq
+local fake = require("fake_api")
+local eq = fake.eq
+local log = require("anujctrl/alnp/log")
 local help = require("anujctrl/alnp/gui/help")
 local topics = require("anujctrl/alnp/help_topics")
 local settings = require("anujctrl/alnp/settings")
@@ -114,6 +116,7 @@ end
 
 function t.update_with_window_hidden_refreshes_nothing()
     help.reset()
+    window.reset() -- X4: init is a no-op while a window from an earlier test is still remembered
     window.setState(newState(0))
     window.init(noopSend)
     local counts = countRefreshes()
@@ -131,6 +134,7 @@ end
 
 function t.update_with_window_visible_refreshes_once_per_new_version()
     help.reset()
+    window.reset() -- X4: init is a no-op while a window from an earlier test is still remembered
     window.setState(newState(0))
     local getWindow = fakeGui.captureNew("comp.Window")
     window.init(noopSend)
@@ -193,6 +197,196 @@ function t.nil_gameInfo_logs_an_error_and_does_not_raise()
         if line:find("gameInfo", 1, true) then sawError = true end
     end
     assert(sawError, "expected a logged error mentioning gameInfo")
+end
+
+-- 7 (X1). One tab builder raising costs that tab alone. ------------------------------------------
+
+local FAILED_TAB_TEXT = "This tab could not be built; see stdout.txt for an aln_plus: line."
+
+-- Replaces module[key] with one that raises. `only` (a schemaForm tabKey) narrows it to one of
+-- the two tabs that share schemaForm.build. Returns the restore function.
+local function breakMethod(module, key, only)
+    local real = module[key]
+    module[key] = function(first, ...)
+        if only == nil or first == only then error("boom: " .. key) end
+        return real(first, ...)
+    end
+    return function() module[key] = real end
+end
+
+local function captureLog()
+    log.reset()
+    local lines = {}
+    log.sink = function(line) lines[#lines + 1] = line end
+    return lines
+end
+
+local function countCalls(widget, name)
+    local n = 0
+    for __, call in ipairs(widget.calls) do
+        if call.name == name then n = n + 1 end
+    end
+    return n
+end
+
+local function findText(root, text)
+    return fakeGui.find(root, function(w)
+        return w.class == "comp.TextView" and fakeGui.text(w) == text
+    end)
+end
+
+local function topBarButton()
+    return fakeGui.find(api.gui.util.getById("gameInfo"), function(w) return w.class == "comp.Button" end)
+end
+
+function t.a_failing_tab_builder_costs_only_its_own_tab()
+    local cases = {
+        { module = schemaForm, key = "build", only = "general" },
+        { module = schemaForm, key = "build", only = "advanced" },
+        { module = patternsTab, key = "build" },
+        { module = linesTab, key = "build" },
+    }
+    for __, case in ipairs(cases) do
+        fake.reset()
+        local lines = captureLog()
+        help.reset()
+        window.reset()
+        local getWindow = fakeGui.captureNew("comp.Window")
+        local restore = breakMethod(case.module, case.key, case.only)
+        local ok, err = pcall(window.init, noopSend)
+        restore()
+        assert(ok, "window.init must not raise: " .. tostring(err))
+
+        local root = getWindow()
+        assert(root, "the window must still be built")
+        local tabWidget = fakeGui.find(root, function(w) return w.class == "comp.TabWidget" end)
+        assert(tabWidget, "the window must still have a TabWidget")
+        eq(countCalls(tabWidget, "addTab"), 4)
+        assert(topBarButton(), "the top-bar button must still be added")
+        assert(findText(root, FAILED_TAB_TEXT), "the failing tab must show the notice")
+        eq(#lines, 1, "exactly one error should be logged")
+    end
+end
+
+-- 8 (X2). The top-bar button is not hostage to the window build. ---------------------------------
+
+-- Makes `method` raise on every widget of `className` built from now on, by wrapping that class's
+-- own "new" (as fakeGui.captureNew does) and rawsetting the method on each instance, which
+-- shadows the fake's strict __index. Returns the restore function.
+local function breakWidgetMethod(className, method)
+    local ns, name = className:match("^(%a+)%.([%w]+)$")
+    local target = api.gui[ns][name]
+    local realNew = target.new
+    target.new = function(...)
+        local widget = realNew(...)
+        widget[method] = function() error("boom: " .. className .. ":" .. method) end
+        return widget
+    end
+    return function() target.new = realNew end
+end
+
+function t.the_topbar_button_survives_a_failing_window_constructor()
+    fake.reset()
+    local lines = captureLog()
+    help.reset()
+    window.reset()
+    local target = api.gui.comp.Window
+    local realNew = target.new
+    target.new = function() error("boom: comp.Window.new") end
+    local ok, err = pcall(window.init, noopSend)
+    target.new = realNew
+    assert(ok, "window.init must not raise: " .. tostring(err))
+
+    local button = topBarButton()
+    assert(button, "the top-bar button must be added before the window is built")
+    eq(#lines, 1, "the failing constructor should be the only thing logged so far")
+    fakeGui.click(button)
+    fakeGui.click(button)
+    eq(#lines, 2, "a click with no window logs once and does nothing")
+end
+
+function t.a_failing_setSize_or_setResizable_does_not_lose_the_window()
+    for __, method in ipairs({ "setSize", "setResizable" }) do
+        fake.reset()
+        local lines = captureLog()
+        help.reset()
+        window.reset()
+        local getWindow = fakeGui.captureNew("comp.Window")
+        local restore = breakWidgetMethod("comp.Window", method)
+        local ok, err = pcall(window.init, noopSend)
+        restore()
+        assert(ok, "window.init must not raise on " .. method .. ": " .. tostring(err))
+
+        assert(getWindow(), "the window must survive a failing " .. method)
+        eq(#lines, 1, "only the failing " .. method .. " should be logged")
+        local button = topBarButton()
+        assert(button, "the top-bar button must still be there")
+        fakeGui.click(button)
+        eq(getWindow():isVisible(), true, "the window must still toggle after a failing " .. method)
+    end
+end
+
+-- 9 (X3). A failing tab refresh costs that tab's refresh alone, and is not replayed forever. -----
+
+function t.a_failing_tab_refresh_does_not_block_the_other_two()
+    fake.reset()
+    help.reset()
+    window.reset()
+    window.setState(newState(0))
+    local getWindow = fakeGui.captureNew("comp.Window")
+    window.init(noopSend)
+    getWindow():setVisible(true, false)
+
+    local lines = captureLog()
+    local counts = countRefreshes()
+    local restore = breakMethod(schemaForm, "refresh")
+    window.setState(newState(1))
+    local ok, err = pcall(window.update)
+    restore()
+    assert(ok, "window.update must not raise: " .. tostring(err))
+
+    eq(counts.schemaForm, 0, "the broken refresh never reached the real one")
+    eq(counts.patternsTab, 1, "the patterns tab must still refresh")
+    eq(counts.linesTab, 1, "the lines tab must still refresh")
+    eq(#lines, 1, "exactly one error should be logged")
+
+    -- The version still counts as refreshed, so the next frame does no work at all.
+    window.update()
+    eq(counts.patternsTab, 1)
+    eq(counts.linesTab, 1)
+end
+
+-- 10 (X4). A second init in the same Lua state is a no-op, not a second window. ------------------
+
+function t.init_twice_builds_one_window_and_one_button()
+    fake.reset()
+    help.reset()
+    window.reset()
+    local built = 0
+    local target = api.gui.comp.Window
+    local realNew = target.new
+    target.new = function(...)
+        built = built + 1
+        return realNew(...)
+    end
+
+    window.init(noopSend)
+    window.init(noopSend)
+    target.new = realNew
+
+    eq(built, 1, "the second init must not build a second window")
+    local gameInfo = api.gui.util.getById("gameInfo")
+    eq(#fakeGui.findAll(gameInfo, function(w) return w.class == "comp.Button" end), 1)
+
+    -- reset() still puts the module back to "no window", so the next init builds again.
+    window.reset()
+    target.new = function(...)
+        built = built + 1
+        return realNew(...)
+    end
+    window.init(noopSend)
+    target.new = realNew
+    eq(built, 2, "after reset() a fresh init must build again")
 end
 
 return t

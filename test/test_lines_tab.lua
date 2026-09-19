@@ -767,4 +767,135 @@ function t.preview_with_the_master_switch_off_still_ticks_and_applies_rows()
     eq(byLine[1].from, "Line 1")
 end
 
+-- ------------------------------------------------------------------------------------------
+-- (X7) A scan that cannot clear the table leaves no half-set state: `rows` is dropped before
+-- deleteAll destroys those widgets (a use-after-delete is a native crash no pcall can catch),
+-- and nothing says a scan is running until the table really is empty.
+-- ------------------------------------------------------------------------------------------
+function t.a_failing_deleteAll_leaves_no_half_started_scan()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local log = require("anujctrl/alnp/log")
+    log.reset()
+    local lines = {}
+    log.sink = function(s) lines[#lines + 1] = s end
+
+    local component = linesTab.build(newState(), function() end)
+    local table_ = findTable(component)
+    table_.deleteAll = function() error("boom: Table:deleteAll") end
+
+    previewAllAndDrain(component) -- the click's own log.wrap catches the error
+    eq(#table_.rows, 0, "a scan that could not clear the table must not add rows")
+    eq(#lines, 1, "the failing deleteAll should be logged once")
+
+    -- Repaired (back to the fake's own deleteAll): the next Preview all behaves normally.
+    table_.deleteAll = nil
+    previewAllAndDrain(component)
+    eq(#table_.rows, 7, "every line gets exactly one row, with no leftovers from the failed scan")
+end
+
+-- ------------------------------------------------------------------------------------------
+-- (X8) A row the table refused is not remembered: "Apply checked" can only ever send rows the
+-- player was actually shown.
+-- ------------------------------------------------------------------------------------------
+function t.a_row_is_remembered_only_after_the_table_accepted_it()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local send, calls = recordingSend()
+    local component = linesTab.build(newState(), send)
+    local table_ = findTable(component)
+
+    clickLabelled(component, "Preview all")
+    table_.addRow = function() error("boom: Table:addRow") end
+    pcall(linesTab.update) -- the game runs update() under guiUpdate's own guard
+    table_.addRow = nil
+
+    clickLabelled(component, "Apply checked")
+    eq(#calls, 0, "a row the table never accepted must not be applied")
+    assert(fakeGui.text(findStatus(component)):find("Nothing is ticked", 1, true),
+        "expected the empty-selection status, got: " .. fakeGui.text(findStatus(component)))
+end
+
+-- ------------------------------------------------------------------------------------------
+-- (X9) The player's own successful apply is not a "name changed" behind the mod's back: the row
+-- keeps showing its proposal instead of going permanently stale on the very next refresh.
+-- ------------------------------------------------------------------------------------------
+function t.the_players_own_apply_does_not_leave_the_row_stale()
+    linesTab.reset()
+    help.reset()
+    local world = buildWorld()
+    local state = newState()
+    local send, calls = recordingSend()
+    local component = linesTab.build(state, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    local proposed = fakeGui.text(table_.rows[1][4])
+    eq(table_.rows[1][1]:isSelected(), true, "line 1 starts ticked (default name)")
+    clickLabelled(component, "Apply checked")
+    assert(renamesByLine(calls)[1], "line 1 should have been sent to the engine")
+
+    -- The engine renames exactly as asked, and the resulting state reaches the tab.
+    world.renameLine(1, proposed)
+    linesTab.clock = function() return 5000 end
+    linesTab.refresh(state)
+
+    eq(fakeGui.text(table_.rows[1][3]), proposed, "the current name column shows the applied name")
+    eq(fakeGui.text(table_.rows[1][4]), proposed, "the row must still show its proposal, not a stale notice")
+end
+
+-- The other half of the same rule: if the engine SKIPPED the item, the name is not the one the
+-- row believes it applied, so the row is stale -- which is right, and what the player must see.
+function t.an_apply_the_engine_skipped_leaves_the_row_stale()
+    linesTab.reset()
+    help.reset()
+    buildWorld()
+    local state = newState()
+    local send = recordingSend()
+    local component = linesTab.build(state, send)
+    local table_ = findTable(component)
+    previewAllAndDrain(component)
+
+    clickLabelled(component, "Apply checked")
+    linesTab.clock = function() return 5000 end
+    linesTab.refresh(state) -- the line still has its old name: the engine refused the item
+
+    eq(fakeGui.text(table_.rows[1][4]), "(name changed: preview again)")
+    eq(table_.rows[1][1]:isSelected(), false)
+end
+
+-- ------------------------------------------------------------------------------------------
+-- (X10) A clock that steps backwards (a system clock correction under os.time) must not pin the
+-- once-per-second refresh throttle forever: `now - lastRefreshAt` goes negative, which is less
+-- than one second, so every later refresh would have been dropped for the rest of the session.
+-- ------------------------------------------------------------------------------------------
+function t.a_backward_clock_step_does_not_pin_the_refresh_throttle()
+    linesTab.reset()
+    help.reset()
+    local world = buildWorld()
+    local state = newState()
+    local component = linesTab.build(state, function() end)
+    local table_ = findTable(component)
+    local now = 5000
+    linesTab.clock = function() return now end
+    previewAllAndDrain(component)
+
+    linesTab.refresh(state) -- the first refresh after the preview sets lastRefreshAt
+    now = now - 3600 -- the clock steps back an hour
+    world.renameLine(1, "Airport Express")
+    linesTab.refresh(state)
+    eq(fakeGui.text(table_.rows[1][3]), "Airport Express", "the refresh must not be throttled away")
+
+    -- And the same for the retry path in update(), which holds the dropped state.
+    now = now + 3600
+    linesTab.refresh(state) -- within a second of the last one: dropped, held as pendingRefresh
+    world.renameLine(2, "Harbour Shuttle")
+    linesTab.refresh(state)
+    now = now - 3600
+    linesTab.update()
+    eq(fakeGui.text(table_.rows[2][3]), "Harbour Shuttle", "the held refresh must still be retried")
+end
+
 return t

@@ -25,7 +25,12 @@ function sync.new(clock)
             pending[path] = nil
             return false
         end
-        if clock() - entry.at < sync.TIMEOUT then
+        -- A negative elapsed time means the clock stepped backwards (a system clock correction
+        -- under os.time). That is not "no time has passed": read literally it is smaller than any
+        -- timeout, so this entry would never expire and the widget would refuse every refresh for
+        -- the rest of the session. Treat it as "time has passed" (hardening X10).
+        local elapsed = clock() - entry.at
+        if elapsed >= 0 and elapsed < sync.TIMEOUT then
             return false
         end
         pending[path] = nil

@@ -16,9 +16,25 @@ local window = {}
 local state = nil
 local windowComponent = nil
 local lastRefreshedVersion = nil
+-- The button is added before the window is built (hardening X2), so it can outlive a build that
+-- never produced one; the player then gets one line in the log per session, not one per click.
+local reportedMissingWindow = false
 
 local function defaultState()
     return { settings = settings.defaults(), records = {}, version = -1 }
+end
+
+-- The top-bar button's own click handler. windowComponent is read at click time, so the button
+-- may be created before -- or entirely without -- a window.
+local function toggleWindow()
+    if not windowComponent then
+        if not reportedMissingWindow then
+            reportedMissingWindow = true
+            log.error("no window was built, so the [ALN+] button has nothing to show.")
+        end
+        return
+    end
+    windowComponent:setVisible(not windowComponent:isVisible(), false)
 end
 
 -- Guards against a nil gameInfo bar or a nil layout on it, exactly as upstream did, since the
@@ -36,7 +52,11 @@ local function addTopBarButton(toggleWindow)
         end
         local button = api.gui.comp.Button.new(api.gui.comp.TextView.new("[ALN+]"), true)
         button:onClick(log.wrap("window.topBarButton", toggleWindow))
-        button:setTooltip(_(help_topics.get("topbar.button").text))
+        -- A tooltip is a nicety: neither a missing topic nor a failing setTooltip may cost the button.
+        log.guard("window.topBarTooltip", function()
+            local topic = help_topics.get("topbar.button")
+            if topic then button:setTooltip(_(topic.text)) end
+        end)
         layout:addItem(api.gui.comp.Component.new("VerticalLine"))
         layout:addItem(button)
         layout:addItem(api.gui.comp.Component.new("VerticalLine"))
@@ -56,10 +76,25 @@ local function buildTab(tabWidget, topicKey, labelText, tabContent)
     tabWidget:addTab(label, wrapper)
 end
 
+-- Stands in for a tab whose content builder raised, so one bad widget call costs that tab rather
+-- than the whole window (hardening X1).
+local FAILED_TAB_TEXT = "This tab could not be built; see stdout.txt for an aln_plus: line."
+
+-- Builds one tab's content under its own guard, then adds the tab under a second one: a raise in
+-- either place leaves the other three tabs, the window and the top-bar button untouched.
+local function addGuardedTab(tabWidget, topicKey, labelText, builder, ...)
+    local content = log.guard("window.tabContent:" .. topicKey, builder, ...)
+    if content == nil then
+        content = api.gui.comp.TextView.new(_(FAILED_TAB_TEXT))
+    end
+    log.guard("window.buildTab:" .. topicKey, buildTab, tabWidget, topicKey, labelText, content)
+end
+
 -- Back to "nothing delivered yet". The game gives every loaded save fresh Lua states, so nothing
 -- in the mod needs this; tests use it, because require caches this module between them.
 function window.reset()
     state, windowComponent, lastRefreshedVersion = nil, nil, nil
+    reportedMissingWindow = false
 end
 
 -- What load() delivers is not trusted: the game has passed non-tables here, and a state written by
@@ -77,6 +112,12 @@ function window.setState(newState)
 end
 
 function window.init(send)
+    -- The game calls guiInit once per Lua state, but a second call has been seen in the wild and
+    -- used to leave two windows and two top-bar buttons behind (hardening X4). window.reset()
+    -- clears this, so a test -- or a fresh save -- still builds.
+    if windowComponent then
+        return log.info("the window already exists; not building a second one.")
+    end
     help.reset()
     schemaForm.reset()
     patternsTab.reset()
@@ -85,45 +126,60 @@ function window.init(send)
     local buildState = state or defaultState()
     state = buildState
 
+    -- First, and under its own guard: whatever the rest of this function does to itself, the
+    -- player keeps the one control that opens the mod (hardening X2).
+    log.guard("window.topBar", addTopBarButton, toggleWindow)
+
     local rootLayout = api.gui.layout.BoxLayout.new("VERTICAL")
-    rootLayout:addItem(help.labelled(_("How this works"), "window.overview"))
+    log.guard("window.header", function()
+        rootLayout:addItem(help.labelled(_("How this works"), "window.overview"))
+    end)
 
     local tabWidget = api.gui.comp.TabWidget.new("NORTH")
-    buildTab(tabWidget, "tab.general", "General", schemaForm.build("general", buildState, send))
-    buildTab(tabWidget, "tab.advanced", "Advanced", schemaForm.build("advanced", buildState, send))
-    buildTab(tabWidget, "tab.patterns", "Patterns", patternsTab.build(buildState, send))
-    buildTab(tabWidget, "tab.lines", "Lines", linesTab.build(buildState, send))
-    rootLayout:addItem(tabWidget)
+    addGuardedTab(tabWidget, "tab.general", "General", schemaForm.build, "general", buildState, send)
+    addGuardedTab(tabWidget, "tab.advanced", "Advanced", schemaForm.build, "advanced", buildState, send)
+    addGuardedTab(tabWidget, "tab.patterns", "Patterns", patternsTab.build, buildState, send)
+    addGuardedTab(tabWidget, "tab.lines", "Lines", linesTab.build, buildState, send)
+    log.guard("window.tabs", function() rootLayout:addItem(tabWidget) end)
 
-    rootLayout:addItem(help.panel())
+    log.guard("window.helpPanel", function()
+        rootLayout:addItem(help.panel())
+    end)
 
     local content = api.gui.comp.Component.new("alnpWindowContent")
-    content:setLayout(rootLayout)
+    log.guard("window.content", function() content:setLayout(rootLayout) end)
 
-    windowComponent = api.gui.comp.Window.new(_("Auto Line Namer Plus"), content)
-    windowComponent:addHideOnCloseHandler()
+    local built = log.guard("window.new", function()
+        return api.gui.comp.Window.new(_("Auto Line Namer Plus"), content)
+    end)
+    if not built then return end
+    windowComponent = built
+    log.guard("window.hideOnClose", function() built:addHideOnCloseHandler() end)
     -- Without an explicit size the game opens the window collapsed around its content. Upstream
     -- used 850 by 500; the Lines table wants more room, and the player can resize from there.
-    windowComponent:setSize(api.gui.util.Size.new(900, 600))
-    windowComponent:setResizable(true)
-    windowComponent:setVisible(false, false)
+    -- Each call is guarded on its own: an unhappy size or a refused setResizable is a cosmetic
+    -- loss, never the window (hardening X2).
+    log.guard("window.setSize", function() built:setSize(api.gui.util.Size.new(900, 600)) end)
+    log.guard("window.setResizable", function() built:setResizable(true) end)
+    log.guard("window.setVisible", function() built:setVisible(false, false) end)
     lastRefreshedVersion = buildState.version
-
-    addTopBarButton(function()
-        windowComponent:setVisible(not windowComponent:isVisible(), false)
-    end)
 end
 
 -- Cheap when the window is hidden: linesTab.update() returns immediately when no scan is running,
 -- and nothing else runs at all.
 function window.update()
-    linesTab.update()
+    log.guard("window.linesUpdate", linesTab.update)
     if not (windowComponent and windowComponent:isVisible()) then return end
     if not state or state.version == lastRefreshedVersion then return end
-    lastRefreshedVersion = state.version
-    schemaForm.refresh(state)
-    patternsTab.refresh(state)
-    linesTab.refresh(state)
+    -- Three guards, one per tab: a refresh that raises costs that tab this frame and nothing else
+    -- (hardening X3). The version is only recorded once all three have had their turn, but it is
+    -- recorded even when one failed -- a tab that cannot refresh would otherwise retry, and log,
+    -- on every frame for the rest of the session.
+    local refreshedVersion = state.version
+    log.guard("window.refresh.schemaForm", schemaForm.refresh, state)
+    log.guard("window.refresh.patternsTab", patternsTab.refresh, state)
+    log.guard("window.refresh.linesTab", linesTab.refresh, state)
+    lastRefreshedVersion = refreshedVersion
 end
 
 return window

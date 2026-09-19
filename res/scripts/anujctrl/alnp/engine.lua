@@ -157,8 +157,10 @@ end
 
 function engine.tick(now)
     if not state then engine.load(nil) end
-    if not state.settings.enabled then return end
+    -- Queued applies come first and ignore the master switch: that switch turns AUTOMATIC renaming
+    -- off, and "Apply checked" is the player asking explicitly.
     if drainPending() > 0 then return end
+    if not state.settings.enabled then return end
     local visits = 0
     for __ = 1, state.settings.scan.linesPerTick do
         if cursor >= #queue then

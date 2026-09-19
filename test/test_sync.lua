@@ -76,4 +76,17 @@ function t.clock_defaults_to_os_time()
     eq(s:shouldApply("p", "anything"), true)
 end
 
+-- (X10) A clock that steps backwards -- os.time() moving back over a system clock correction --
+-- made `now - then` negative, which is smaller than any timeout, so the pending entry would never
+-- have expired and that widget would have stopped accepting refreshes for the rest of the
+-- session. Time going backwards counts as "time has passed".
+function t.a_backward_clock_step_does_not_pin_a_pending_edit_forever()
+    local clock = newClock(1000)
+    local s = sync.new(clock.now)
+    s:sent("p", "a")
+    clock.advance(-60)
+    eq(s:shouldApply("p", "b"), true)
+    eq(s:shouldApply("p", "anything"), true, "the stale pending entry was cleared too")
+end
+
 return t

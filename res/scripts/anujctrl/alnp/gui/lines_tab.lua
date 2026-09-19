@@ -112,7 +112,6 @@ local function addRow(id, f, tbl)
         lockBox = lockBox, name = name, n = n, key = key, hasProposal = hasProposal, lock = lock,
         nameAtPreview = f.name, stale = false, lockNoticed = false,
     }
-    rows[#rows + 1] = row
 
     lockBox:onToggle(log.wrap("lines_tab.lock:" .. tostring(id), function(newValue)
         if newValue == false and (row.lock == "edited" or row.lock == "prefix") then
@@ -131,6 +130,9 @@ local function addRow(id, f, tbl)
     end))
 
     tableWidget:addRow({ applyBox, kindView, currentView, proposedView, lockBox, renameButton })
+    -- Only now (hardening X8): a row the table refused is a row the player cannot see, and
+    -- "Apply checked" must never send one of those.
+    rows[#rows + 1] = row
 end
 
 local function startScan()
@@ -138,18 +140,30 @@ local function startScan()
     -- clearCache() calls never reach it. "Preview all" is the one place that can go stale, so it
     -- starts from nothing rather than from whatever the first preview of the session saw.
     facts.clearCache()
-    scanIds = facts.playerLines()
-    scanIndex = 1
-    scanTotal = #scanIds
-    scanChanged = 0
-    scanTaken = propose.takenByKey(state.records, nil)
-    scanWords = tracker.defaultWords(state.settings, _("Line"))
-    scanDecideView = setmetatable({ enabled = true }, { __index = state.settings })
-    pendingRefresh = nil -- these rows are built from live facts; a dropped refresh has nothing to add
-    tableWidget:deleteAll()
+    local ids = facts.playerLines()
+    local total = #ids
+    local taken = propose.takenByKey(state.records, nil)
+    local words = tracker.defaultWords(state.settings, _("Line"))
+    local decideView = setmetatable({ enabled = true }, { __index = state.settings })
+
+    -- Order matters for native safety (hardening X7). `rows` goes first, so that from here on no
+    -- code of ours can reach a row widget deleteAll is about to destroy -- a use-after-delete is
+    -- a native crash pcall cannot catch. The scan state goes last, so that if any of the three
+    -- widget calls above it raises, nothing believes a scan is running: the tab stays exactly as
+    -- it was and the next "Preview all" starts cleanly instead of doubling every row.
     rows = {}
+    tableWidget:deleteAll()
+    statusView:setText(scanningStatus(0, total), false)
+
+    scanIds = ids
+    scanIndex = 1
+    scanTotal = total
+    scanChanged = 0
+    scanTaken = taken
+    scanWords = words
+    scanDecideView = decideView
     everPreviewed = true
-    statusView:setText(scanningStatus(0, scanTotal), false)
+    pendingRefresh = nil -- these rows are built from live facts; a dropped refresh has nothing to add
 end
 
 local function applyChecked()
@@ -169,6 +183,12 @@ local function applyChecked()
     send("apply", { renames = renames })
     for __, row in ipairs(checkedRows) do
         row.applyBox:setSelected(false, false)
+        -- The name this row now expects to see (hardening X9). Without it the player's own
+        -- successful apply read as "someone renamed this line behind our back" on the very next
+        -- refresh, and the row went permanently stale. If the engine refused the item instead,
+        -- the line still has its old name, so that same refresh marks the row stale -- which is
+        -- exactly right: the proposal was not applied and the player must preview again.
+        row.nameAtPreview = row.name
     end
     statusView:setText((_("Applied %d line(s).")):format(#renames), false)
 end
@@ -255,7 +275,11 @@ function linesTab.refresh(newState)
     state = newState
     if not everPreviewed then return end
     local now = linesTab.clock()
-    if lastRefreshAt and (now - lastRefreshAt) < 1 then
+    -- elapsed < 0 means the clock stepped backwards (a system clock correction under os.time).
+    -- Read literally that is "less than a second ago", which would throttle every refresh for the
+    -- rest of the session, so time going backwards counts as time having passed (hardening X10).
+    local elapsed = lastRefreshAt and (now - lastRefreshAt)
+    if elapsed and elapsed >= 0 and elapsed < 1 then
         pendingRefresh = newState
         return
     end
@@ -267,7 +291,8 @@ end
 function linesTab.update()
     if pendingRefresh then
         local now = linesTab.clock()
-        if not lastRefreshAt or (now - lastRefreshAt) >= 1 then
+        local elapsed = lastRefreshAt and (now - lastRefreshAt) -- see the note in refresh() (X10)
+        if not elapsed or elapsed < 0 or elapsed >= 1 then
             state = pendingRefresh
             pendingRefresh = nil
             lastRefreshAt = now

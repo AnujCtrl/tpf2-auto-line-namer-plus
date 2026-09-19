@@ -418,4 +418,96 @@ function t.scroll_area_has_the_shared_maximum_size()
     eq(sizeCall.args[1].args[2], 380)
 end
 
+-- 11 (X5). Every CheckBox and TextInputField is constructed with a string. Both classes document
+-- a :new(text) taking one, and every call proven in the game passes one (this mod's own Lines tab
+-- and Patterns tab included); a bare new() is the unproven shape, and this form had three.
+
+function t.checkboxes_and_text_fields_are_constructed_with_a_string()
+    local function checkAll(root)
+        local widgets = fakeGui.findAll(root, function(w)
+            return w.class == "comp.CheckBox" or w.class == "comp.TextInputField"
+        end)
+        for __, widget in ipairs(widgets) do
+            eq(type(widget.args[1]), "string", widget.class .. " must be constructed with a string")
+        end
+        return #widgets
+    end
+
+    resetAll()
+    local state = { settings = settings.defaults() }
+    local __, send = recordingSend()
+    local found = checkAll(schemaForm.build("general", state, send))
+        + checkAll(schemaForm.build("advanced", state, send))
+    assert(found >= 2, "expected a checkbox and a text field among the built rows")
+
+    -- And the third site: the text field every numeric row falls back to with no Slider.
+    resetAll()
+    log.reset()
+    log.sink = function() end
+    api.gui.comp.Slider.new = function() error("no slider in this build") end
+    assert(checkAll(schemaForm.build("advanced", state, send)) >= 1)
+end
+
+-- 12 (X6). One editor that cannot be read or written costs its own row, not the refresh. The
+-- Slider's getValue/setValue are the unproven pair, so that is the one broken here.
+
+local function captureLog()
+    log.reset()
+    local lines = {}
+    log.sink = function(s) lines[#lines + 1] = s end
+    return lines
+end
+
+function t.a_failing_editor_does_not_stop_the_other_rows_refreshing()
+    resetAll()
+    local lines = captureLog()
+    local state = { settings = settings.defaults() }
+    local __, send = recordingSend()
+    local advancedComp = schemaForm.build("advanced", state, send)
+
+    local sliderRow = findLayoutByFirstLabel(advancedComp, _(settings.row("scan.linesPerTick").label))
+    local slider = fakeGui.find(sliderRow.children[2], function(w) return w.class == "comp.Slider" end)
+    assert(slider, "expected a slider on the numeric row")
+    slider.getValue = function() error("boom: Slider:getValue") end
+
+    local sepRow = findLayoutByFirstLabel(advancedComp, _(settings.row("sep.towns").label))
+    local sepField = fakeGui.find(sepRow, function(w) return w.class == "comp.TextInputField" end)
+    assert(sepField, "expected a text field on the separator row")
+
+    assert(settings.set(state.settings, "sep.towns", " / "))
+    assert(settings.set(state.settings, "scan.linesPerTick", 9))
+    local ok, err = pcall(schemaForm.refresh, state)
+    assert(ok, "refresh must not raise: " .. tostring(err))
+    eq(sepField:getText(), " / ", "every other row must still refresh")
+    eq(#lines, 1, "the failing editor should be logged once")
+end
+
+-- 13 (X6). A row that cannot be built is replaced by a notice; the rest of the tab still builds.
+
+function t.a_row_that_cannot_be_built_is_replaced_by_a_notice()
+    resetAll()
+    local lines = captureLog()
+    local state = { settings = settings.defaults() }
+    local __, send = recordingSend()
+
+    local targetLabel = settings.row("sep.towns").label
+    local realButtonFor = help.buttonFor
+    help.buttonFor = function(label, text)
+        if label == targetLabel then error("boom: this row") end
+        return realButtonFor(label, text)
+    end
+    local ok, advancedComp = pcall(schemaForm.build, "advanced", state, send)
+    help.buttonFor = realButtonFor
+    assert(ok, "build must not raise: " .. tostring(advancedComp))
+
+    local notice = fakeGui.find(advancedComp, function(w)
+        return w.class == "comp.TextView" and (fakeGui.text(w) or ""):find("(could not be shown)", 1, true)
+    end)
+    assert(notice, "the failing row must be replaced by a notice")
+    assert(fakeGui.text(notice):find(_(targetLabel), 1, true), "the notice must name the row")
+    assert(findLayoutByFirstLabel(advancedComp, _(settings.row("sep.via").label)),
+        "the rows after the failing one must still be built")
+    eq(#lines, 1, "the failing row should be logged once")
+end
+
 return t

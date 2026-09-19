@@ -30,9 +30,21 @@ local function tooltipOf(w)
     return rawget(w, "tooltip")
 end
 
+-- Counts DISTINCT widgets: the tab's scroll area both takes the content as its constructor
+-- argument and is given it again through setContent (X11: that is what every proven use does),
+-- and the fake records a child under each of those calls, so one real widget is reachable by two
+-- edges of the fake's tree. The question asked here is "how many info buttons exist", not "how
+-- many paths lead to one", so the same widget seen twice still counts once.
 local function countButtonsWithTooltip(root, key)
     local text = topics.get(key).text
-    return #fakeGui.findAll(root, function(w) return tooltipOf(w) == text end)
+    local seen, count = {}, 0
+    for __, widget in ipairs(fakeGui.findAll(root, function(w) return tooltipOf(w) == text end)) do
+        if not seen[widget] then
+            seen[widget] = true
+            count = count + 1
+        end
+    end
+    return count
 end
 
 -- One Component per logical row (built by patterns_tab's own newRow() helper); a row's subtree
@@ -374,6 +386,28 @@ function t.scroll_area_has_the_shared_maximum_size()
     assert(sizeCall, "expected a setMaximumSize call on the scroll area")
     eq(sizeCall.args[1].args[1], 860)
     eq(sizeCall.args[1].args[2], 380)
+end
+
+-- 13 (X11). Every proven use of comp.ScrollArea follows the constructor with setContent(content),
+-- and both other tabs in this mod do too. Without it the tab can come up empty.
+
+function t.scroll_area_is_given_its_content_explicitly()
+    patternsTab.reset()
+    help.reset()
+    local scrollArea = patternsTab.build(newState(), function() end)
+
+    local content = fakeGui.find(scrollArea, function(w)
+        return w.class == "comp.Component" and w.args[1] == "alnpPatternsContent"
+    end)
+    assert(content, "expected the patterns content component")
+
+    local setContentCall = nil
+    for __, call in ipairs(scrollArea.calls) do
+        if call.name == "setContent" then setContentCall = call end
+    end
+    assert(setContentCall, "expected a setContent call on the scroll area")
+    assert(setContentCall.args[1] == content, "setContent must be given the tab's own content")
+    eq(scrollArea.args[1], content, "the constructor argument stays as it is")
 end
 
 return t

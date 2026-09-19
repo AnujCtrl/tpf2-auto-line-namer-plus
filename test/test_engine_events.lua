@@ -116,6 +116,22 @@ function t.case14e_a_queued_item_is_skipped_when_the_line_is_renamed_while_it_wa
     eq(skipped, true, "the skip must be logged")
 end
 
+-- The master switch turns AUTOMATIC renaming off. "Apply checked" is the player asking explicitly,
+-- so a queued apply must still drain when the switch is off (the help text and the Lines tab both
+-- promise this); only the scan is skipped.
+function t.case14f_a_queued_apply_still_drains_when_the_master_switch_is_off()
+    local world = H.world({ [1] = H.busLine("Line 1"), [2] = H.busLine("Line 2") })
+    local sent = H.installCmd(world)
+    local engine = H.freshEngine(H.saved({ enabled = false }))
+    engine.handleEvent("apply", { renames = { { line = 1, name = "Chosen By Hand", from = "Line 1" } } })
+    engine.tick(100)
+    eq(#sent, 1, "the explicit apply must be sent even though automatic renaming is off")
+    eq(sent[1].name, "Chosen By Hand")
+    engine.tick(101)
+    engine.tick(110)
+    eq(#sent, 1, "and with the switch off nothing is renamed automatically: line 2 keeps its default name")
+end
+
 function t.case15_rename_now_ignores_lock_but_only_clears_edited()
     local world = H.world({
         [1] = H.busLine("My Custom Name"),

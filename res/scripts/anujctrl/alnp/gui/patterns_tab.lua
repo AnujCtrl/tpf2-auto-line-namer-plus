@@ -203,6 +203,9 @@ function patternsTab.build(state, send)
     content:setLayout(layout)
 
     local scrollArea = api.gui.comp.ScrollArea.new(content, "alnpPatternsScroll")
+    -- Every proven use of comp.ScrollArea follows the constructor with setContent(), and so do
+    -- the other two tabs of this mod; without it the tab can come up empty (hardening X11).
+    scrollArea:setContent(content)
     -- Same cap as gui/lines_tab.lua and gui/schema_form.lua, inside the 900x600 window (window.lua).
     scrollArea:setMaximumSize(api.gui.util.Size.new(860, 380))
 
