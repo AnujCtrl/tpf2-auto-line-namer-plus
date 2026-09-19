@@ -7,6 +7,23 @@ local window = require "anujctrl/alnp/gui/window"
 
 local SOURCE = "alnp"
 local engineLoaded = false
+local reportedOddLoad = false
+
+-- The game binds this callback as load(state, reset), and the first argument is not always a state
+-- table: a real session passed `true` before guiInit. Urban Games' own scripts treat nil, an empty
+-- table and reset as "nothing to adopt" (res/scripts/guidesystem.lua), and so does this.
+local function usableState(saved, reset)
+    if reset then return nil end
+    if type(saved) ~= "table" then
+        if saved ~= nil and not reportedOddLoad then
+            reportedOddLoad = true
+            log.info("load() was given a " .. type(saved) .. " (" .. tostring(saved) .. "), not a state; ignored")
+        end
+        return nil
+    end
+    if next(saved) == nil then return nil end
+    return saved
+end
 
 local function send(name, param)
     api.cmd.sendCommand(api.cmd.make.sendScriptEvent("auto_line_namer_plus.lua", SOURCE, name, param or {}))
@@ -14,14 +31,17 @@ end
 
 function data()
     return {
-        load = function(saved)
-            -- Both calls are safe on either thread: the engine keeps only its first load, and the
-            -- window only stores the table until a window exists (which is only on the GUI thread).
+        load = function(saved, reset)
+            local state = usableState(saved, reset)
+            if not state then return end
+            -- Both calls are safe on either thread: the engine adopts only the first real state
+            -- (until then it runs on defaults), and the window only stores the table until a
+            -- window exists (which is only on the GUI thread).
             if not engineLoaded then
                 engineLoaded = true
-                log.guard("load", engine.load, saved)
+                log.guard("load", engine.load, state)
             end
-            log.guard("setState", window.setState, saved)
+            log.guard("setState", window.setState, state)
         end,
         save = function()
             return log.guard("save", engine.save)

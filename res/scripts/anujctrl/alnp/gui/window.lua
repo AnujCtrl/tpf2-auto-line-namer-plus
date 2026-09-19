@@ -56,8 +56,24 @@ local function buildTab(tabWidget, topicKey, labelText, tabContent)
     tabWidget:addTab(label, wrapper)
 end
 
+-- Back to "nothing delivered yet". The game gives every loaded save fresh Lua states, so nothing
+-- in the mod needs this; tests use it, because require caches this module between them.
+function window.reset()
+    state, windowComponent, lastRefreshedVersion = nil, nil, nil
+end
+
+-- What load() delivers is not trusted: the game has passed non-tables here, and a state written by
+-- an older version of the mod can lack settings that exist now. The tabs index the state freely,
+-- so they only ever see a complete one: settings merged over the defaults, records keyed by number.
 function window.setState(newState)
-    state = newState
+    if type(newState) ~= "table" or type(newState.settings) ~= "table" then return end
+    if state and newState.version ~= nil and newState.version == state.version then return end
+    local records = {}
+    for lineId, record in pairs(type(newState.records) == "table" and newState.records or {}) do
+        local id = tonumber(lineId) -- keys may arrive as strings after the trip between threads
+        if id and type(record) == "table" then records[id] = record end
+    end
+    state = { settings = settings.merge(nil, newState.settings), records = records, version = newState.version }
 end
 
 function window.init(send)

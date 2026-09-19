@@ -51,7 +51,7 @@ local function noopSend(__, ___) end
 
 function t.init_adds_exactly_one_button_to_gameInfo()
     help.reset()
-    window.setState(nil)
+    window.reset()
     window.init(noopSend)
 
     local gameInfo = api.gui.util.getById("gameInfo")
@@ -63,7 +63,7 @@ end
 
 function t.clicking_topbar_button_toggles_window_visibility()
     help.reset()
-    window.setState(nil)
+    window.reset()
     local getWindow = fakeGui.captureNew("comp.Window")
     window.init(noopSend)
 
@@ -83,7 +83,7 @@ end
 
 function t.window_has_four_tabs_with_info_buttons_on_overview_and_each_tab()
     help.reset()
-    window.setState(nil)
+    window.reset()
     local getWindow = fakeGui.captureNew("comp.Window")
     window.init(noopSend)
     local root = getWindow()
@@ -155,7 +155,7 @@ end
 
 function t.window_is_given_a_size_of_900_by_600()
     help.reset()
-    window.setState(nil)
+    window.reset()
     local getWindow = fakeGui.captureNew("comp.Window")
     window.init(noopSend)
 
@@ -185,7 +185,7 @@ function t.nil_gameInfo_logs_an_error_and_does_not_raise()
         return realGetById(id)
     end
 
-    window.setState(nil)
+    window.reset()
     window.init(noopSend) -- must not raise
 
     local sawError = false

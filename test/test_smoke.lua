@@ -37,6 +37,13 @@ local function installCmd(world, scriptData)
     return sent
 end
 
+-- The game gives every loaded save fresh Lua states; require caches modules between tests, so
+-- each test starts by putting the engine and the window back to "nothing loaded yet".
+local function freshGame()
+    require("anujctrl/alnp/engine").load(nil)
+    require("anujctrl/alnp/gui/window").reset()
+end
+
 local function busWorld()
     return fakeGame.world({
         towns = { [900] = "Springfield", [901] = "Shelbyville" },
@@ -61,7 +68,7 @@ function t.whole_session_boots_renames_and_applies_from_the_gui()
     local scriptData = data()
     local sent = installCmd(world, scriptData)
 
-    scriptData.load(nil)
+    freshGame()
     local getWindow = fakeGui.captureNew("comp.Window")
     scriptData.guiInit()
 
@@ -130,7 +137,7 @@ local function previewThenHandRenameThenApply(autoRename)
     local scriptData = data()
     installCmd(world, scriptData)
 
-    scriptData.load(nil)
+    freshGame()
     -- Both settings are changed BEFORE the window exists, and the resulting state is handed to the
     -- GUI thread before guiInit, so that from here on only the story's own events move the version.
     scriptData.handleEvent("file", "alnp", "set", { path = "kinds.bus.autoRename", value = autoRename })
@@ -198,7 +205,7 @@ function t.error_inside_tick_is_logged_once_and_update_does_not_raise()
     local scriptData = data()
     installCmd({ renameLine = function() end }, scriptData)
 
-    scriptData.load(nil)
+    freshGame()
     local realPlayerLines = facts.playerLines
     facts.playerLines = function() error("boom: facts.playerLines is broken") end
 
@@ -214,6 +221,47 @@ function t.error_inside_tick_is_logged_once_and_update_does_not_raise()
     assert(allOk, "update() must not raise even when engine.tick errors, on either call")
     eq(#logLines, 1)
     assert(logLines[1]:find("boom", 1, true), "the logged line should mention the underlying error")
+end
+
+-- 3. The game binds the callback as load(state, reset) and does not only ever pass a state table:
+-- in a real session it passed `true` before guiInit, and the window build then died indexing a
+-- boolean (2026-09-19, stdout.txt: "schema_form.lua:170: attempt to index local 'state' (a boolean
+-- value)"). Urban Games' own scripts guard with `state == nil or next(state) == nil or reset`. -------
+
+local function bootWithLoads(loads)
+    log.reset()
+    local logLines = {}
+    log.sink = function(line) logLines[#logLines + 1] = line end
+    busWorld()
+    freshGame()
+    dofile(GAME_SCRIPT)
+    local scriptData = data()
+    installCmd({ renameLine = function() end }, scriptData)
+    for __, args in ipairs(loads) do scriptData.load(args[1], args[2]) end
+    local getWindow = fakeGui.captureNew("comp.Window")
+    scriptData.guiInit()
+    return scriptData, getWindow, logLines
+end
+
+function t.the_window_builds_when_load_was_called_with_things_that_are_not_a_state()
+    local __, getWindow, logLines = bootWithLoads({ { true }, { false }, { nil }, { {} }, { "junk" }, { 7 } })
+    assert(getWindow() ~= nil, "guiInit must build the window; log: " .. table.concat(logLines, " | "))
+    for __, line in ipairs(logLines) do
+        assert(not line:find("guiInit", 1, true), "guiInit logged an error: " .. line)
+    end
+end
+
+function t.a_reset_load_is_discarded_not_adopted()
+    local stale = { settings = { enabled = false }, records = {}, version = 9 }
+    local scriptData = bootWithLoads({ { stale, true } })
+    eq(scriptData.save().settings.enabled, true, "a load flagged reset must not be adopted by the engine")
+end
+
+function t.a_real_state_still_reaches_the_engine_and_the_window()
+    local saved = { settings = { enabled = false }, records = {}, version = 3 }
+    local scriptData, getWindow = bootWithLoads({ { true }, { saved, false } })
+    eq(scriptData.save().settings.enabled, false, "a real state after junk must still be adopted")
+    assert(getWindow() ~= nil)
 end
 
 return t
