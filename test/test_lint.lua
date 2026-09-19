@@ -422,21 +422,38 @@ function t.no_integer_division_operator()
     assert(#offenders == 0, "`//` used in:\n  " .. table.concat(offenders, "\n  "))
 end
 
--- `table.unpack` is 5.2+; res/ code must spell it `(unpack or table.unpack)(...)` so it also
--- works on 5.1, where `unpack` is a global and `table.unpack` does not exist.
-function t.table_unpack_always_has_a_51_fallback()
+-- Shipped code must not call unpack at all. Transport Fever 2's own res/scripts/init.lua replaces
+-- table.unpack with `function(t) ... return oldunpack(t) end`, which DROPS the (i, j) arguments,
+-- and the game has no global `unpack`. `table.unpack(results, 2)` therefore returned everything
+-- from index 1 in the game (and only there), which made log.guard return xpcall's `true` instead of
+-- the guarded function's result (2026-09-19: state never saved, window impossible to close). Pass
+-- arguments positionally and return results as varargs instead.
+local function callsUnpack(code)
+    return code:find("%f[%w_]unpack%s*%(") ~= nil or code:find("unpack%s+or%s", 1) ~= nil
+end
+
+function t.shipped_code_never_calls_unpack()
     local offenders = {}
     for __, path in ipairs(findLuaFiles()) do
         local lines, code = readCodeLines(path)
         if lines then
             for n, line in ipairs(lines) do
-                if code[n]:find("table%.unpack%(") and not code[n]:find("unpack or", 1, true) then
+                if callsUnpack(code[n]) then
                     offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
                 end
             end
         end
     end
-    assert(#offenders == 0, "`table.unpack(` without an `unpack or` fallback in:\n  " .. table.concat(offenders, "\n  "))
+    assert(#offenders == 0, "unpack is not trustworthy in the game (init.lua drops its i, j):\n  "
+        .. table.concat(offenders, "\n  "))
+end
+
+function t.unpack_checker_catches_every_spelling_and_passes_clean_code()
+    assert(callsUnpack("return table.unpack(results, 2)"), "table.unpack(")
+    assert(callsUnpack("return (unpack or table.unpack)(results, 2)"), "the old fallback spelling")
+    assert(callsUnpack("local a, b = unpack (t)"), "global unpack with a space")
+    assert(not callsUnpack("local unpacked = repack(t)"), "an identifier merely containing the word")
+    assert(not callsUnpack("return finish(label, xpcall(f, debug.traceback))"), "clean code")
 end
 
 function t.no_utf8_library()

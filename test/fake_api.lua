@@ -3,6 +3,18 @@
 -- so no task needs to edit this file.
 local fake = {}
 
+-- MIRROR OF THE GAME'S STANDARD LIBRARY. Transport Fever 2's own res/scripts/init.lua makes exactly
+-- one change to it, and that change broke this mod in the game while every host test passed:
+--     local oldunpack = table.unpack
+--     table.unpack = function(t) if type(t) == "userdata" then ... else return oldunpack(t) end end
+-- i.e. table.unpack DROPS its (i, j) arguments, and (Lua 5.2.2) there is no global `unpack`. Every
+-- test runs under the same rule, on every interpreter, so code that leans on unpack fails here too.
+do
+    local oldunpack = table.unpack or unpack
+    unpack = nil
+    table.unpack = function(tbl) return oldunpack(tbl) end
+end
+
 local resetHooks = {}
 
 -- Register a function that runs at the end of every fake.reset().

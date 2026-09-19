@@ -125,4 +125,49 @@ function t.wrap_logs_the_label_and_does_not_raise_on_error()
     assert(lines[1]:find("kaput", 1, true), lines[1])
 end
 
+-- THE GAME REPLACES table.unpack. res/scripts/init.lua:86 (Transport Fever 2's own file) does
+--     local oldunpack = table.unpack
+--     table.unpack = function(t) if type(t) == "userdata" then ... else return oldunpack(t) end end
+-- which silently DROPS the (i, j) arguments, and the game has no global `unpack`. log.guard used to
+-- return `table.unpack(results, 2)`, so in the game it returned xpcall's `true` instead of the
+-- function's result: save() handed the game `true` (so the state was never kept and load(true)
+-- followed), and Window.new's result was `true`, so the real window could never be closed
+-- (2026-09-19). The guard must not depend on unpack at all.
+local function withTheGamesUnpack(body)
+    local savedGlobal, savedTable = unpack, table.unpack
+    local oldunpack = table.unpack or unpack
+    unpack = nil
+    table.unpack = function(tbl) return oldunpack(tbl) end -- the (i, j) arguments are dropped
+    local ok, err = pcall(body)
+    unpack, table.unpack = savedGlobal, savedTable
+    if not ok then error(err, 0) end
+end
+
+function t.guard_returns_the_functions_result_under_the_games_table_unpack()
+    withTheGamesUnpack(function()
+        capture()
+        local window = { isTheWindow = true }
+        local result = log.guard("window.new", function() return window end)
+        assert(result == window, "guard must return the function's value, got " .. tostring(result))
+        local a, b, c = log.guard("multi", function() return 1, nil, 3 end)
+        eq({ a, b == nil, c }, { 1, true, 3 }, "multiple results, a nil in the middle")
+    end)
+end
+
+function t.guard_passes_arguments_under_the_games_table_unpack_including_nil_ones()
+    withTheGamesUnpack(function()
+        capture()
+        local got = log.guard("args", function(x, y, z) return { x = x, yIsNil = y == nil, z = z } end, "a", nil, "c")
+        eq(got, { x = "a", yIsNil = true, z = "c" })
+    end)
+end
+
+function t.wrap_works_under_the_games_table_unpack()
+    withTheGamesUnpack(function()
+        capture()
+        local wrapped = log.wrap("click", function(x) return x * 2 end)
+        eq(wrapped(21), 42)
+    end)
+end
+
 return t

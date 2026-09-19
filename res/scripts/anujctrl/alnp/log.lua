@@ -55,21 +55,29 @@ function log.debug(message) emit(LEVELS.debug, message) end
 
 -- Run fn(...) so that a script error is logged with a traceback instead of reaching the game.
 -- Returns fn's results, or nil after an error.
-function log.guard(label, fn, ...)
-    local args = { n = select("#", ...), ... }
-    local results = { xpcall(function() return fn((unpack or table.unpack)(args, 1, args.n)) end, debug.traceback) }
-    if results[1] then
-        return (unpack or table.unpack)(results, 2)
-    end
+-- Hands xpcall's results on: everything after the status on success, nil after reporting on error.
+-- Results travel as varargs on purpose, never through unpack (see log.guard).
+local function finish(label, ok, ...)
+    if ok then return ... end
+    local err = ...
     -- Reporting the error must not raise: tostring() can call a hostile __tostring, the label may
     -- not be a string, and log.sink is the game's own print. Anything raised here would escape the
     -- guard, which is the one thing the guard exists to prevent.
     pcall(function()
-        local described, text = pcall(tostring, results[2])
+        local described, text = pcall(tostring, err)
         if not described then text = "<error object that cannot be converted to text>" end
         log.error(tostring(label) .. ": " .. text)
     end)
     return nil
+end
+
+-- NO unpack ANYWHERE IN HERE. Transport Fever 2's own res/scripts/init.lua replaces table.unpack
+-- with a one-argument version that drops (i, j), and the game has no global unpack; the earlier
+-- `table.unpack(results, 2)` therefore returned xpcall's `true` instead of fn's result, in the game
+-- only. Arguments are passed positionally (six is more than any caller uses) and results come back
+-- as varargs, so nothing here depends on what unpack does.
+function log.guard(label, fn, a, b, c, d, e, f)
+    return finish(label, xpcall(function() return fn(a, b, c, d, e, f) end, debug.traceback))
 end
 
 -- A function that runs fn under log.guard, for widget callbacks.
