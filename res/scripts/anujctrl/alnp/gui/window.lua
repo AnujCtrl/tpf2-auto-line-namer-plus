@@ -28,7 +28,8 @@ local function addTopBarButton(toggleWindow)
     if not gameInfo then
         return log.error("gameInfo component is nil.")
     end
-    gameInfo:invokeLater(function()
+    -- The game runs this on a later frame, after guiInit's own guard has returned, so it needs its own.
+    gameInfo:invokeLater(log.wrap("window.addTopBarButton", function()
         local layout = gameInfo:getLayout()
         if not layout then
             return log.error("gameInfo layout is nil.")
@@ -39,7 +40,7 @@ local function addTopBarButton(toggleWindow)
         layout:addItem(api.gui.comp.Component.new("VerticalLine"))
         layout:addItem(button)
         layout:addItem(api.gui.comp.Component.new("VerticalLine"))
-    end)
+    end))
 end
 
 -- The proven idiom (upstream auto_line_namer_gui.lua) passes a plain TextView as a tab's label;

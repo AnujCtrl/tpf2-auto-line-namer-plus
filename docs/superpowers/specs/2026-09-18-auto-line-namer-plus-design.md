@@ -322,7 +322,7 @@ Implementation:
   the game continues.
 - `log.lua` prefixes `aln_plus:` and suppresses repeats of an identical message.
 - Logs land in
-  `~/.local/share/Steam/userdata/204184616/1066780/local/crash_dump/stdout.txt`.
+  `~/.local/share/Steam/userdata/<your Steam id>/1066780/local/crash_dump/stdout.txt`.
 
 ## 12. Testing
 
@@ -367,6 +367,6 @@ button shows its tooltip on hover and fills the help panel on click, with no tex
 ## 14. Install
 
 `install.sh` rsyncs the mod into
-`~/.local/share/Steam/userdata/204184616/1066780/local/mods/auto_line_namer_plus_1`, excluding
+`~/.local/share/Steam/userdata/<your Steam id>/1066780/local/mods/auto_line_namer_plus_1`, excluding
 `.git`, `docs`, `test`, `tf2-api`, `.vscode`, `.luacheckrc`, `.gitignore`, `README.md`,
 `.superpowers` and itself (`install.sh`). `TPF2_LOCAL_MODS` overrides the destination root.

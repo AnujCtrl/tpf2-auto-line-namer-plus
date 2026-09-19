@@ -315,6 +315,8 @@ end
 -- ":onClick(" inside a string or a comment can never trip this.
 local HANDLER_TRIGGERS = {
     ":onClick(", ":onToggle(", ":onChange(", ":onIndexChanged(", ":onValueChanged(", ":onClose(",
+    -- Not a widget event, but the game runs the callback on a later frame, outside guiInit's guard.
+    ":invokeLater(",
 }
 
 local function registersUnwrappedHandler(code)
