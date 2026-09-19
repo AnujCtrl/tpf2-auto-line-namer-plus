@@ -1,12 +1,17 @@
--- Prefixed logging to the game's stdout.txt. An identical consecutive message is printed once,
--- so an error inside a callback that runs several times a second cannot flood the log.
+-- Prefixed logging to the game's stdout.txt. A message is printed the first time and then at most
+-- once every REPEAT_EVERY repeats (with an "(xN)" suffix), so an error inside a callback that runs
+-- several times a second cannot flood the log. The count is per message, not per last message:
+-- two errors raised in alternation would otherwise both look "new" every single time.
 local log = {}
 
 local PREFIX = "aln_plus: "
 local LEVELS = { error = 1, info = 2, debug = 3 }
+local REPEAT_EVERY = 100
+local MAX_TRACKED = 200 -- bound the table; a long session must not grow it without limit
 
 local level = LEVELS.info
-local lastMessage = nil
+local counts = {}
+local tracked = 0
 
 -- Tests replace this.
 log.sink = print
@@ -18,16 +23,30 @@ end
 -- Back to the initial state. Modules are cached by require, so tests call this first.
 function log.reset()
     level = LEVELS.info
-    lastMessage = nil
+    counts = {}
+    tracked = 0
     log.sink = print
 end
 
 local function emit(required, message)
     if level < required then return end
     message = tostring(message)
-    if message == lastMessage then return end
-    lastMessage = message
-    log.sink(PREFIX .. message)
+    local seen = counts[message]
+    if not seen then
+        if tracked >= MAX_TRACKED then
+            counts = {}
+            tracked = 0
+        end
+        counts[message] = 1
+        tracked = tracked + 1
+        log.sink(PREFIX .. message)
+        return
+    end
+    seen = seen + 1
+    counts[message] = seen
+    if seen % REPEAT_EVERY == 0 then
+        log.sink(PREFIX .. message .. " (x" .. seen .. ")")
+    end
 end
 
 function log.error(message) emit(LEVELS.error, message) end
@@ -42,7 +61,14 @@ function log.guard(label, fn, ...)
     if results[1] then
         return (unpack or table.unpack)(results, 2)
     end
-    log.error(label .. ": " .. tostring(results[2]))
+    -- Reporting the error must not raise: tostring() can call a hostile __tostring, the label may
+    -- not be a string, and log.sink is the game's own print. Anything raised here would escape the
+    -- guard, which is the one thing the guard exists to prevent.
+    pcall(function()
+        local described, text = pcall(tostring, results[2])
+        if not described then text = "<error object that cannot be converted to text>" end
+        log.error(tostring(label) .. ": " .. text)
+    end)
     return nil
 end
 

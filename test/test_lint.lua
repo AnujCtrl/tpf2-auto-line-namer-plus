@@ -313,15 +313,18 @@ end
 -- one reaches the game instead of being logged. `code` is one line already reduced to code-only
 -- text (see codeLines()); a handler registration only ever recognised there, so a mention of
 -- ":onClick(" inside a string or a comment can never trip this.
-local HANDLER_TRIGGERS = {
-    ":onClick(", ":onToggle(", ":onChange(", ":onIndexChanged(", ":onValueChanged(", ":onClose(",
+-- Matched by shape, not by a list of names: the game's widgets expose dozens of events (onEnter,
+-- onCancel, onDestroy, onStep, onVisibilityChange, onSelect, onScroll, onMove, onCurrentChanged,
+-- ...), and any fixed list silently stops covering the ones added to a tab later.
+local HANDLER_PATTERNS = {
+    ":on%u[%w_]*%s*%(",
     -- Not a widget event, but the game runs the callback on a later frame, outside guiInit's guard.
-    ":invokeLater(",
+    ":invokeLater%s*%(",
 }
 
 local function registersUnwrappedHandler(code)
-    for __, trigger in ipairs(HANDLER_TRIGGERS) do
-        if code:find(trigger, 1, true) then
+    for __, pattern in ipairs(HANDLER_PATTERNS) do
+        if code:find(pattern) then
             return not code:find("log.wrap(", 1, true)
         end
     end
@@ -351,6 +354,18 @@ function t.handler_registration_checker_catches_unwrapped_and_passes_wrapped()
         "checkbox:onToggle(function(v) send(v) end)",
         "button:onClick(handler)",
         "field:onChange(function(text) end)",
+        -- Y8: the docs expose far more events than any fixed list keeps up with, so the rule
+        -- matches the shape of a registration instead of a list of names.
+        "widget:onEnter(handler)",
+        "widget:onCancel(handler)",
+        "widget:onDestroy(handler)",
+        "widget:onStep(handler)",
+        "widget:onVisibilityChange(handler)",
+        "widget:onSelect(handler)",
+        "widget:onScroll(handler)",
+        "widget:onMove(handler)",
+        "widget:onCurrentChanged(handler)",
+        "api.gui.util.getGameUI():invokeLater(handler)",
     }
     for __, line in ipairs(mustReport) do
         assert(registersUnwrappedHandler(codeOnly(line)), "expected to catch: " .. line)
@@ -359,7 +374,13 @@ function t.handler_registration_checker_catches_unwrapped_and_passes_wrapped()
     local mustNotReport = {
         'checkbox:onToggle(log.wrap("x", function(v) send(v) end))',
         'button:onClick(log.wrap("y", handler))',
+        'widget:onVisibilityChange(log.wrap("z", handler))',
+        'getGameUI():invokeLater(log.wrap("w", handler))',
         "layout:addItem(x)",
+        -- Not registrations: a lowercase method, and a plain call to something merely named on...
+        "table:onlyLooksLikeAnEvent(x)",
+        "self:setVisible(true)",
+        "onClick(handler)",
     }
     for __, line in ipairs(mustNotReport) do
         assert(not registersUnwrappedHandler(codeOnly(line)), "expected NOT to catch: " .. line)

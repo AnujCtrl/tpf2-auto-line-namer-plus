@@ -8,6 +8,9 @@ local window = require "anujctrl/alnp/gui/window"
 local SOURCE = "alnp"
 local engineLoaded = false
 local reportedOddLoad = false
+-- The last table save() handed the game. Returning nil from save() makes the game store nothing,
+-- so every setting and lock would be lost without the player ever seeing an error.
+local lastSaved = {}
 
 -- The game binds this callback as load(state, reset), and the first argument is not always a state
 -- table: a real session passed `true` before guiInit. Urban Games' own scripts treat nil, an empty
@@ -29,22 +32,30 @@ local function send(name, param)
     api.cmd.sendCommand(api.cmd.make.sendScriptEvent("auto_line_namer_plus.lua", SOURCE, name, param or {}))
 end
 
+-- The whole body of load(), including the inspection of the value the game passed: tostring() on
+-- a foreign value and log.sink can both raise, and outside a guard that would crash the game.
+local function loadBody(saved, reset)
+    local state = usableState(saved, reset)
+    if not state then return end
+    -- Both calls are safe on either thread: the engine adopts only the first real state
+    -- (until then it runs on defaults), and the window only stores the table until a
+    -- window exists (which is only on the GUI thread).
+    if not engineLoaded then
+        engineLoaded = true
+        log.guard("engine load", engine.load, state)
+    end
+    log.guard("setState", window.setState, state)
+end
+
 function data()
     return {
         load = function(saved, reset)
-            local state = usableState(saved, reset)
-            if not state then return end
-            -- Both calls are safe on either thread: the engine adopts only the first real state
-            -- (until then it runs on defaults), and the window only stores the table until a
-            -- window exists (which is only on the GUI thread).
-            if not engineLoaded then
-                engineLoaded = true
-                log.guard("load", engine.load, state)
-            end
-            log.guard("setState", window.setState, state)
+            log.guard("load", loadBody, saved, reset)
         end,
         save = function()
-            return log.guard("save", engine.save)
+            local saved = log.guard("save", engine.save)
+            if type(saved) == "table" then lastSaved = saved end
+            return lastSaved
         end,
         update = function()
             log.guard("update", engine.tick, os.time())

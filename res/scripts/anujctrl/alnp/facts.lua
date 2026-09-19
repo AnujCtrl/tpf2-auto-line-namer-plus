@@ -7,6 +7,11 @@ local facts = {}
 -- Cargo is read from at most this many vehicles per line; a line's vehicles almost always share it.
 local MAX_VEHICLES_SAMPLED = 8
 
+-- facts.apiCheck runs a full forLine per line, on one tick, with the industry cache cleared each
+-- time. On a large network that would visibly freeze the game, so the walk itself is capped too.
+local MAX_LINES_EXAMINED = 100
+local MAX_CARGO_LINES_REPORTED = 10
+
 -- TransportMode enum name -> the mode group the rest of the mod uses.
 local MODE_GROUPS = {
     BUS = "bus", TRUCK = "truck",
@@ -18,7 +23,11 @@ local MODE_GROUPS = {
 
 local industryCache = {} -- [stationGroupId] = industry name, or false when none was found
 
+-- getComponent "must be given a valid, existing entity": on a dead id it RAISES "Invalid entity",
+-- it does not return nil. Entities die between two reads all the time (a line deleted while the
+-- Lines tab refreshes its preview), so every read goes through this existence check.
 local function component(entity, typeName)
+    if entity == nil or not api.engine.entityExists(entity) then return nil end
     return api.engine.getComponent(entity, api.type.ComponentType[typeName])
 end
 
@@ -133,12 +142,14 @@ function facts.forLine(lineId, tbl)
     local stops, towns, seenGroup, seenTown = {}, {}, {}, {}
     for __, stop in ipairs(lineComp.stops) do
         local group = stop.stationGroup
-        if group and not seenGroup[group] then
+        -- A stop whose station group has already been deleted is skipped: reading it would raise,
+        -- and a stop with no name is of no use to any pattern.
+        if group and not seenGroup[group] and api.engine.entityExists(group) then
             seenGroup[group] = true
             local entry = { stationGroup = group, stop = entityName(group) }
             local groupComp = component(group, "STATION_GROUP")
             local station = groupComp and groupComp.stations and groupComp.stations[1]
-            if station then
+            if station and api.engine.entityExists(station) then
                 local townId = api.engine.system.stationSystem.getTown(station)
                 if townId and api.engine.entityExists(townId) then
                     local townName = entityName(townId)
@@ -174,9 +185,11 @@ end
 function facts.apiCheck(tbl)
     local report = {}
     report[#report + 1] = 'translated default word: _("Line") = "' .. tostring(_("Line")) .. '"'
-    local checked = 0
-    for __, lineId in ipairs(facts.playerLines()) do
-        if checked >= 10 then break end
+    local lines = facts.playerLines()
+    local checked, examined = 0, 0
+    for __, lineId in ipairs(lines) do
+        if checked >= MAX_CARGO_LINES_REPORTED or examined >= MAX_LINES_EXAMINED then break end
+        examined = examined + 1
         facts.clearCache()
         local f = facts.forLine(lineId, tbl)
         if f and f.carriesCargo then
@@ -187,6 +200,12 @@ function facts.apiCheck(tbl)
         end
     end
     if checked == 0 then report[#report + 1] = "no cargo lines found; build one and run the check again" end
+    if checked >= MAX_CARGO_LINES_REPORTED then
+        report[#report + 1] = ("stopped after %d cargo lines (of %d lines, %d examined)")
+            :format(checked, #lines, examined)
+    elseif examined < #lines then
+        report[#report + 1] = ("stopped after examining %d of %d lines"):format(examined, #lines)
+    end
     return report
 end
 

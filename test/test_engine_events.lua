@@ -21,6 +21,8 @@ function t.case14_apply_renames_listed_lines_and_skips_blank_or_vanished()
         { line = 3, name = "Ghost Renamed", from = "Ghost", n = 1, key = "k3" },
         { line = 4, name = "Already Right", from = "Already Right", n = 3, key = "k4" },
     } })
+    -- Y6: the handler only queues; one tick drains all four (scan.linesPerTick defaults to 5).
+    engine.tick(100)
     local records = engine.save().records
     eq(records[1], { lastAssigned = "Bus Springfield", number = 2, numberKey = "k1" })
     eq(records[2], nil)
@@ -42,6 +44,7 @@ function t.case14b_apply_skips_items_whose_name_changed_since_the_preview()
         { line = 1, name = "Bus Springfield", from = "Line 1", n = 1, key = "k1" },
         { line = 2, name = "Bus Shelbyville", from = "Line 2", n = 2, key = "k2" },
     } })
+    engine.tick(100) -- Y6: the handler queues, the tick applies
     eq(#sent, 1, "only the line whose name is unchanged may be renamed")
     eq(sent[1], { id = 2, name = "Bus Shelbyville" })
     eq(engine.save().records[1], nil, "the skipped line's record must be untouched")
@@ -58,8 +61,59 @@ function t.case14c_apply_without_a_from_field_sends_nothing()
     local sent = H.installCmd(world)
     local engine = H.freshEngine(H.saved({}))
     engine.handleEvent("apply", { renames = { { line = 1, name = "Bus Springfield", n = 1, key = "k1" } } })
+    engine.tick(100) -- Y6: the handler queues, the tick applies
     eq(#sent, 0, "an item with no `from` must be dropped")
     eq(engine.save().records[1], nil)
+end
+
+-- Y6: "Apply checked" used to rename the whole batch inside the event handler, on one tick. The
+-- items are queued instead and drained at most scan.linesPerTick per tick, so a 200-row apply
+-- cannot stall the game the way one huge tick would.
+local function twelveLines()
+    local lines = {}
+    for i = 1, 12 do lines[i] = H.busLine("Line " .. i) end
+    return lines
+end
+
+local function twelveItems()
+    local items = {}
+    for i = 1, 12 do
+        items[i] = { line = i, name = "Renamed " .. i, from = "Line " .. i, n = i, key = "k" .. i }
+    end
+    return items
+end
+
+function t.case14d_a_batch_of_twelve_is_applied_five_per_tick()
+    local world = H.world(twelveLines())
+    local sent = H.installCmd(world)
+    local engine = H.freshEngine(H.saved({ ["scan.linesPerTick"] = 5 }))
+    engine.handleEvent("apply", { renames = twelveItems() })
+    eq(#sent, 0, "the handler itself must rename nothing")
+    engine.tick(100)
+    eq(#sent, 5, "first tick")
+    engine.tick(101)
+    eq(#sent, 10, "second tick")
+    engine.tick(102)
+    eq(#sent, 12, "third tick drains the rest")
+    eq(sent[12], { id = 12, name = "Renamed 12" })
+end
+
+function t.case14e_a_queued_item_is_skipped_when_the_line_is_renamed_while_it_waits()
+    local world = H.world(twelveLines())
+    local sent = H.installCmd(world)
+    local engine, logs = H.freshEngine(H.saved({ ["scan.linesPerTick"] = 5 }))
+    engine.handleEvent("apply", { renames = twelveItems() })
+    engine.tick(100)
+    world.renameLine(12, "Player Named It") -- while item 12 is still queued
+    engine.tick(101)
+    engine.tick(102)
+    eq(#sent, 11, "the hand-renamed line must not be overwritten")
+    eq(engine.save().records[12], nil, "and its record must be untouched")
+    local skipped = false
+    for __, line in ipairs(logs) do
+        if line:find("apply skipped for line 12", 1, true) then skipped = true end
+    end
+    eq(skipped, true, "the skip must be logged")
 end
 
 function t.case15_rename_now_ignores_lock_but_only_clears_edited()

@@ -12,6 +12,8 @@ local engine = {}
 local state          -- { settings = tbl, records = { [lineId] = record }, version = n }  (saved)
 local runtime = {}   -- [lineId] = { signature = s, changedAt = seconds or nil }          (not saved)
 local queue, cursor = {}, 0
+local pending, pendingCursor = {}, 0 -- apply items waiting to be renamed, drained a few per tick
+local applyOne                       -- defined with the apply handler, used by engine.tick
 local defaultWords   -- cache, cleared whenever a setting changes
 
 -- A mod folder with no user_defaults.lua is perfectly normal, so a "not found" is silent. A file
@@ -50,6 +52,7 @@ function engine.load(saved)
         end
     end
     runtime, queue, cursor, defaultWords = {}, {}, 0, nil
+    pending, pendingCursor = {}, 0
     log.setLevel(state.settings.log.level)
     facts.clearCache()
 end
@@ -129,6 +132,21 @@ local function visit(lineId, now)
     end
 end
 
+-- Renames the player queued with "Apply checked", at most scan.linesPerTick of them, before the
+-- normal scan gets a turn. A tick that applied something does nothing else: the budget is what
+-- keeps one huge batch from stalling the game, so it must not be spent twice in the same tick.
+local function drainPending()
+    local budget = state.settings.scan.linesPerTick
+    local done = 0
+    while done < budget and pendingCursor < #pending do
+        pendingCursor = pendingCursor + 1
+        done = done + 1
+        applyOne(pending[pendingCursor])
+    end
+    if pendingCursor >= #pending then pending, pendingCursor = {}, 0 end
+    return done
+end
+
 local function refillQueue()
     queue, cursor = facts.playerLines(), 0
     local alive = {}
@@ -140,6 +158,7 @@ end
 function engine.tick(now)
     if not state then engine.load(nil) end
     if not state.settings.enabled then return end
+    if drainPending() > 0 then return end
     local visits = 0
     for __ = 1, state.settings.scan.linesPerTick do
         if cursor >= #queue then
@@ -177,7 +196,8 @@ end
 -- authority on whether that is still true -- if the line has been renamed since (by the player,
 -- by another mod, by an earlier apply), the item is dropped rather than overwriting a name the
 -- player never offered up. The GUI unticks such rows too, but this check is what guarantees it.
-local function applyOne(item)
+-- Forward-declared above so engine.tick can drain the queue; defined here, next to its handler.
+function applyOne(item)
     local lineId, name = tonumber(item.line), item.name
     if not (lineId and type(name) == "string" and name:match("%S") and facts.signature(lineId)) then return end
     if type(item.from) ~= "string" or facts.name(lineId) ~= item.from then
@@ -192,8 +212,12 @@ local function applyOne(item)
     end
 end
 
+-- Queue only: engine.tick applies them a few per tick. The `from` check in applyOne happens at
+-- the moment each item is applied, so a line the player renames while its item waits is skipped.
 function handlers.apply(param)
-    for __, item in ipairs(param.renames or {}) do applyOne(item) end
+    for __, item in ipairs(param.renames or {}) do
+        if type(item) == "table" then pending[#pending + 1] = item end
+    end
 end
 
 -- "rename now" on one row: the player asked, so the tracker is not consulted.

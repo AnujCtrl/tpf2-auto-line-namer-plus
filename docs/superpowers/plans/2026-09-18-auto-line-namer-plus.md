@@ -94,7 +94,7 @@ if a contract is wrong, stop and report.
 local kinds = require "anujctrl/alnp/kinds"
 kinds.list   -- {"bus","tram","truck","trainPassenger","trainCargo","shipPassenger","shipCargo","airPassenger","airCargo","unknown"}
 kinds.cargo  -- { truck=true, trainCargo=true, shipCargo=true, airCargo=true }
-kinds.scopes -- {"local","intercity","regional"}
+kinds.scopes -- {"town","intercity","regional"}  -- "town" is labelled "Local"
 kinds.label  -- English display name per kind, e.g. kinds.label.trainCargo == "Cargo train"
 ```
 
@@ -130,7 +130,6 @@ settings.rowsIn(sectionKey)      -- array of rows, schema order
 settings.helpText(row)           -- row.help .. "\n\n" .. generated "Default: ..." (+ " Range: a to b" / " Choices: x, y")
 settings.patternFor(tbl, kind)   -- tbl.patterns[kind] if non-empty string, else tbl.patterns.default
 settings.applyPreset(tbl, key)   -- sets patterns.default and every patterns.<kind> ("" when the preset omits it); true/false
-settings.resetSection(tbl, sectionKey)  -- restores schema defaults for that section's rows
 ```
 
 Nested shape follows the dotted path: `"scan.linesPerTick"` ↔ `tbl.scan.linesPerTick`,
@@ -149,7 +148,7 @@ classify.scope(facts, tbl)      -- one of kinds.scopes, using tbl.scope.localMax
 
 ```lua
 local naming = require "anujctrl/alnp/naming"
-naming.render(pattern, facts, ctx)  -- ctx = { settings = tbl, kind = "bus", scope = "local", n = 2 or nil } -> string
+naming.render(pattern, facts, ctx)  -- ctx = { settings = tbl, kind = "bus", scope = "town", n = 2 or nil } -> string
 naming.usesNumber(pattern)          -- true if the pattern contains {n} or {lineNumber} (with or without modifiers)
 naming.pickNumber(current, taken)   -- current if non-nil and not taken[current]; else lowest integer >= 1 not in taken
 naming.sampleFacts(kind)            -- plausible facts table for previews

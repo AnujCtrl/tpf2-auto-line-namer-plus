@@ -127,6 +127,16 @@ function fakeGame.world(spec)
 
     local player = spec.player or 1
 
+    -- The real api.engine.getComponent (and stationSystem.getTown) RAISE "Invalid entity" when the
+    -- id no longer exists; they do not return nil. Opt in with spec.strictEntities = true or
+    -- world.strictEntities(), so tests written against the older nil-returning fake still pass.
+    local strictEntities = spec.strictEntities == true
+    local function checkEntity(entity)
+        if strictEntities and not exists[entity] then
+            error("Invalid entity: " .. tostring(entity))
+        end
+    end
+
     -- Install the API surface.
     api.type.ComponentType = COMPONENT_TYPE
     api.type.enum = api.type.enum or {}
@@ -137,6 +147,7 @@ function fakeGame.world(spec)
     end
 
     api.engine.getComponent = function(entity, componentType)
+        checkEntity(entity)
         if componentType == COMPONENT_TYPE.NAME then
             local name = names[entity]
             if name == nil then return nil end
@@ -176,6 +187,7 @@ function fakeGame.world(spec)
 
     api.engine.system.stationSystem = api.engine.system.stationSystem or {}
     api.engine.system.stationSystem.getTown = function(stationId)
+        checkEntity(stationId)
         return townOf[stationId] or -1
     end
 
@@ -231,6 +243,20 @@ function fakeGame.world(spec)
 
     function world.breakGetEntities()
         getEntitiesBroken = true
+    end
+
+    -- From here on, reading a component of a dead entity raises, as the real API does.
+    function world.strictEntities()
+        strictEntities = true
+    end
+
+    -- Remove any registered entity (a vehicle, a station group, a station, a town).
+    function world.removeEntity(id)
+        exists[id] = nil
+        names[id] = nil
+        groupStations[id] = nil
+        vehicleCaps[id] = nil
+        townOf[id] = nil
     end
 
     currentWorld = world

@@ -281,6 +281,97 @@ function t.apiCheck_reports_the_translated_word_and_one_line_per_cargo_stop()
     assert(report[2]:find("Coal Yard", 1, true), report[2])
 end
 
+-- Y4: on a dead id the real api.engine.getComponent raises "Invalid entity" instead of returning
+-- nil, and entities do vanish between two reads (a previewed line deleted while the Lines tab
+-- refreshes). Every read of an id the mod did not just prove alive must be checked first.
+
+local function strictWorld()
+    facts.clearCache()
+    return fakeGame.world{
+        strictEntities = true,
+        towns = { [900] = "Springfield", [901] = "Shelbyville" },
+        stationGroups = {
+            [11] = { name = "Springfield Central", station = 111, town = 900, position = { 0, 0, 0 } },
+            [12] = { name = "Shelbyville East", station = 112, town = 901, position = { 500, 0, 0 } },
+        },
+        vehicles = { [501] = { capacities = { PASSENGERS = 40 } } },
+        lines = { [1] = { name = "Line 7", stops = { 11, 12 }, modes = { "BUS" }, vehicles = { 501 } } },
+        player = 1,
+    }
+end
+
+function t.name_of_a_line_deleted_between_two_calls_is_empty()
+    local world = strictWorld()
+    eq(facts.name(1), "Line 7")
+    world.removeLine(1)
+    eq(facts.name(1), "", "a deleted line must read as an empty name, not raise")
+    eq(facts.signature(1), nil)
+    eq(facts.forLine(1, nil), nil)
+end
+
+function t.a_vehicle_deleted_between_two_calls_does_not_break_the_line()
+    local world = strictWorld()
+    world.removeEntity(501)
+    local f = facts.forLine(1, nil)
+    assert(f, "forLine must still describe the line")
+    eq(f.cargos, {})
+    eq(f.carriesPassengers, false)
+end
+
+function t.a_station_group_deleted_between_two_calls_is_skipped()
+    local world = strictWorld()
+    world.removeEntity(12)
+    local f = facts.forLine(1, nil)
+    assert(f, "forLine must still describe the line")
+    eq(#f.stops, 1, "the dead stop is skipped")
+    eq(f.stops[1].stop, "Springfield Central")
+    eq(f.towns, { "Springfield" })
+end
+
+function t.a_station_deleted_under_a_live_group_is_skipped()
+    local world = strictWorld()
+    world.removeEntity(112)
+    local f = facts.forLine(1, nil)
+    assert(f, "forLine must still describe the line")
+    eq(#f.stops, 2)
+    eq(f.towns, { "Springfield" })
+end
+
+-- Y5: apiCheck runs a full forLine per line on one tick, with the industry cache cleared each
+-- time, so a big network would freeze the game. It stops early and says that it did.
+local function manyLineWorld(count, cargo)
+    facts.clearCache()
+    local vehicles, lines = {}, {}
+    for i = 1, count do
+        vehicles[5000 + i] = { capacities = cargo and { COAL = 10 } or { PASSENGERS = 10 } }
+        lines[i] = { name = "Line " .. i, stops = {}, modes = { cargo and "TRUCK" or "BUS" },
+            vehicles = { 5000 + i } }
+    end
+    return fakeGame.world{ vehicles = vehicles, lines = lines, player = 1 }
+end
+
+function t.apiCheck_stops_after_a_hundred_lines_and_says_so()
+    manyLineWorld(140, false)
+    local report = facts.apiCheck(nil)
+    local last = report[#report]
+    assert(last:find("100", 1, true), last)
+    assert(last:find("140", 1, true), last)
+end
+
+function t.apiCheck_stops_after_ten_cargo_lines_and_says_so()
+    manyLineWorld(30, true)
+    local report = facts.apiCheck(nil)
+    local last = report[#report]
+    assert(last:find("10 cargo lines", 1, true), last)
+end
+
+function t.apiCheck_says_nothing_about_caps_when_it_examined_every_line()
+    manyLineWorld(3, false)
+    local report = facts.apiCheck(nil)
+    local last = report[#report]
+    assert(not last:find("stopped", 1, true), last)
+end
+
 function t.apiCheck_reports_when_there_are_no_cargo_lines()
     facts.clearCache()
     fakeGame.world{

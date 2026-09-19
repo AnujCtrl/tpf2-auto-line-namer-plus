@@ -12,7 +12,10 @@ kinds.list = {
 -- Kinds whose shipped default pattern is the cargo one.
 kinds.cargo = { truck = true, trainCargo = true, shipCargo = true, airCargo = true }
 
-kinds.scopes = { "local", "intercity", "regional" }
+-- Scope ids must be valid Lua identifiers AND not Lua keywords: the game stores this mod's state
+-- as Lua source with bare identifier keys, so a key named "local" is a syntax error and the game
+-- silently drops the whole state file. "town" is the id; its shipped label text is still "Local".
+kinds.scopes = { "town", "intercity", "regional" }
 
 -- English display names, shown in the Patterns and Lines tabs (wrap in _() at the call site).
 kinds.label = {

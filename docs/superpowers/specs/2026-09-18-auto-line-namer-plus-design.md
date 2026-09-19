@@ -113,8 +113,10 @@ Kinds: `bus`, `tram`, `truck`, `trainPassenger`, `trainCargo`, `shipPassenger`, 
 `airPassenger`, `airCargo`, `unknown`. A road line is `truck` when it carries cargo. Electric and
 non-electric variants map to the same kind, as do small and large ships and aircraft.
 
-Scopes: `local` (distinct towns ≤ `scope.localMaxTowns`), `regional` (distinct towns ≥
-`scope.regionalMinTowns`), otherwise `intercity`.
+Scopes: `town` (distinct towns ≤ `scope.localMaxTowns`, labelled "Local"), `regional` (distinct
+towns ≥ `scope.regionalMinTowns`), otherwise `intercity`. No scope id may be a Lua keyword: the
+game stores saved state as Lua source with bare identifier keys, so a key named `local` is a
+syntax error and the game drops this mod's whole state file.
 
 ## 6. When a line is renamed
 
@@ -244,7 +246,7 @@ Settings (defaults in brackets):
 | eligibility | `defaults.extraPrefixes` [""] | extra default-name words, comma-separated |
 | eligibility | `minStops` [2] | fewer distinct stops than this: leave alone |
 | labels | `label.kind.<kind>` [bus=Bus, tram=Tram, truck=Truck, trainPassenger=Train, trainCargo=Freight, shipPassenger=Ferry, shipCargo=Ship, airPassenger=Air, airCargo=Air Cargo, unknown=Line] | text for `{type}` |
-| labels | `label.scope.<scope>` [Local, Intercity, Regional] | text for `{scope}` |
+| labels | `label.scope.<scope>` [town=Local, intercity=Intercity, regional=Regional] | text for `{scope}` |
 | scope | `scope.localMaxTowns` [1], `scope.regionalMinTowns` [3] | scope thresholds |
 | separators | `sep.towns` [" – "], `sep.via` [", "], `sep.cargo` [", "] | joiners |
 | cargo | `cargo.max` [2], `cargo.mixedLabel` ["Mixed"], `cargo.hidePassengers` [true] | `{cargo}` shaping |

@@ -28,7 +28,7 @@ end
 function classify.scope(facts, tbl)
     local count = #(facts.towns or {})
     if count >= tbl.scope.regionalMinTowns then return "regional" end
-    if count <= tbl.scope.localMaxTowns then return "local" end
+    if count <= tbl.scope.localMaxTowns then return "town" end
     return "intercity"
 end
 

@@ -69,12 +69,12 @@ local SCOPE_WIDE = { scope = { localMaxTowns = 2, regionalMinTowns = 4 } }
 local SCOPE_OVERLAP = { scope = { localMaxTowns = 3, regionalMinTowns = 2 } }
 
 local SCOPE_CASES = {
-    { label = "zero_towns_is_local", towns = {}, tbl = SCOPE, expected = "local" },
-    { label = "one_town_is_local", towns = { "A" }, tbl = SCOPE, expected = "local" },
+    { label = "zero_towns_is_town", towns = {}, tbl = SCOPE, expected = "town" },
+    { label = "one_town_is_town", towns = { "A" }, tbl = SCOPE, expected = "town" },
     { label = "two_towns_is_intercity", towns = { "A", "B" }, tbl = SCOPE, expected = "intercity" },
     { label = "three_towns_is_regional", towns = { "A", "B", "C" }, tbl = SCOPE, expected = "regional" },
     { label = "five_towns_is_regional", towns = { "A", "B", "C", "D", "E" }, tbl = SCOPE, expected = "regional" },
-    { label = "two_towns_is_local_with_wider_thresholds", towns = { "A", "B" }, tbl = SCOPE_WIDE, expected = "local" },
+    { label = "two_towns_is_town_with_wider_thresholds", towns = { "A", "B" }, tbl = SCOPE_WIDE, expected = "town" },
     { label = "three_towns_is_intercity_with_wider_thresholds", towns = { "A", "B", "C" }, tbl = SCOPE_WIDE, expected = "intercity" },
     { label = "four_towns_is_regional_with_wider_thresholds", towns = { "A", "B", "C", "D" }, tbl = SCOPE_WIDE, expected = "regional" },
     { label = "overlapping_thresholds_favour_regional", towns = { "A", "B" }, tbl = SCOPE_OVERLAP, expected = "regional" },
@@ -86,8 +86,8 @@ for __, case in ipairs(SCOPE_CASES) do
     end
 end
 
-function t.scope_nil_towns_is_local()
-    eq(classify.scope({}, SCOPE), "local")
+function t.scope_nil_towns_is_town()
+    eq(classify.scope({}, SCOPE), "town")
 end
 
 return t

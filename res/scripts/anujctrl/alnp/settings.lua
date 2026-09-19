@@ -19,9 +19,10 @@ local KIND_TYPE_TEXT = {
     unknown = "Line",
 }
 
--- Text substituted for {scope}. The default value and its own display text happen to match.
+-- Text substituted for {scope}, keyed by scope id (kinds.scopes). The ids must stay Lua
+-- identifiers that are not keywords: the game writes saved state as Lua source with bare keys.
 local SCOPE_TYPE_TEXT = {
-    ["local"] = "Local",
+    town = "Local",
     intercity = "Intercity",
     regional = "Regional",
 }
@@ -126,7 +127,7 @@ end
 for __, scope in ipairs(kinds.scopes) do
     addRow({ path = "label.scope." .. scope, type = "string", default = SCOPE_TYPE_TEXT[scope], section = "labels",
         label = SCOPE_TYPE_TEXT[scope] .. " label",
-        help = "Text substituted for {scope} on " .. scope .. "-scope lines.\n"
+        help = "Text substituted for {scope} on " .. SCOPE_TYPE_TEXT[scope]:lower() .. " lines.\n"
             .. "Example: {scope} alone renders as \"" .. SCOPE_TYPE_TEXT[scope] .. "\"." })
 end
 
@@ -417,12 +418,6 @@ function settings.applyPreset(tbl, key)
         tbl.patterns[kind] = preset.patterns[kind] or ""
     end
     return true
-end
-
-function settings.resetSection(tbl, sectionKey)
-    for __, row in ipairs(settings.rowsIn(sectionKey)) do
-        rawSet(tbl, row.path, row.default)
-    end
 end
 
 return settings

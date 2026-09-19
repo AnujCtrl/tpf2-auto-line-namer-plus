@@ -6,7 +6,7 @@ local function tbl(over)
     local s = {
         label = {
             kind = { bus = "Bus", trainCargo = "Freight", truck = "Truck" },
-            scope = { ["local"] = "Local", intercity = "Intercity", regional = "Regional" },
+            scope = { town = "Local", intercity = "Intercity", regional = "Regional" },
         },
         sep = { towns = " – ", via = ", ", cargo = ", " },
         cargo = { max = 2, mixedLabel = "Mixed", hidePassengers = true },

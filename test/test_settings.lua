@@ -198,19 +198,6 @@ function t.each_preset_produces_its_exact_patterns_for_every_kind()
     end
 end
 
-function t.resetSection_restores_only_its_own_rows()
-    local tbl = settings.defaults()
-    tbl.scan.linesPerTick = 40
-    tbl.preview.linesPerFrame = 99
-    tbl.cargo.max = 6
-
-    settings.resetSection(tbl, "performance")
-
-    eq(tbl.scan.linesPerTick, 5)
-    eq(tbl.preview.linesPerFrame, 25)
-    eq(tbl.cargo.max, 6)
-end
-
 function t.rowsIn_returns_schema_order_and_row_of_unknown_path_is_nil()
     local rows = settings.rowsIn("numbering")
     eq(#rows, 3)
@@ -218,6 +205,39 @@ function t.rowsIn_returns_schema_order_and_row_of_unknown_path_is_nil()
     eq(rows[2].path, "number.first")
     eq(rows[3].path, "number.pad")
     eq(settings.row("nope"), nil)
+end
+
+-- The game writes its script-state file as Lua source with bare identifier keys, so any saved key
+-- that is a Lua keyword (or not identifier-shaped) makes that file invalid and the game silently
+-- drops this mod's whole state. Every key we can save must survive being written bare.
+local LUA_KEYWORDS = {
+    ["and"] = true, ["break"] = true, ["do"] = true, ["else"] = true, ["elseif"] = true,
+    ["end"] = true, ["false"] = true, ["for"] = true, ["function"] = true, ["goto"] = true,
+    ["if"] = true, ["in"] = true, ["local"] = true, ["nil"] = true, ["not"] = true,
+    ["or"] = true, ["repeat"] = true, ["return"] = true, ["then"] = true, ["true"] = true,
+    ["until"] = true, ["while"] = true,
+}
+
+local function checkKey(key, where)
+    assert(type(key) == "string", where .. ": key is not a string")
+    assert(not LUA_KEYWORDS[key], where .. ": " .. key .. " is a Lua keyword")
+    assert(key:match("^[%a_][%w_]*$"), where .. ": " .. key .. " is not identifier-shaped")
+end
+
+function t.no_saved_key_is_a_lua_keyword()
+    for __, row in ipairs(settings.schema) do
+        for segment in row.path:gmatch("[^%.]+") do
+            checkKey(segment, "settings path " .. row.path)
+        end
+    end
+    for __, scope in ipairs(kinds.scopes) do checkKey(scope, "scope id") end
+    for __, kind in ipairs(kinds.list) do checkKey(kind, "kind id") end
+    for __, field in ipairs({ "lastAssigned", "locked", "number", "numberKey" }) do
+        checkKey(field, "record field")
+    end
+    for __, field in ipairs({ "settings", "records", "version" }) do
+        checkKey(field, "engine state field")
+    end
 end
 
 return t

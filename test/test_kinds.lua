@@ -20,8 +20,8 @@ function t.cargo_kinds_are_real_kinds()
     eq(kinds.cargo, { truck = true, trainCargo = true, shipCargo = true, airCargo = true })
 end
 
-function t.scopes_are_local_intercity_regional()
-    eq(kinds.scopes, { "local", "intercity", "regional" })
+function t.scopes_are_town_intercity_regional()
+    eq(kinds.scopes, { "town", "intercity", "regional" })
 end
 
 return t
